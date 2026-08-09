@@ -9,12 +9,14 @@ Usage (after deployment, with PUBLIC_WEBHOOK_URL set in .env):
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters
 
 from app.config import TELEGRAM_BOT_TOKEN, PUBLIC_WEBHOOK_URL
-from app.db import init_db
+from app.db import init_db, SessionLocal, get_or_create_user
 from app.handlers import start_command, handle_text, handle_voice, handle_photo, handle_document
+from app.google_oauth import exchange_code_for_tokens
 
 telegram_app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
 telegram_app.add_handler(CommandHandler("start", start_command))
@@ -50,3 +52,45 @@ async def telegram_webhook(request: Request):
 @app.get("/")
 async def health():
     return {"status": "Atlas is alive"}
+
+
+@app.get("/oauth2callback")
+async def oauth2callback(request: Request):
+    code = request.query_params.get("code")
+    telegram_id = request.query_params.get("state")
+    error = request.query_params.get("error")
+
+    if error or not code or not telegram_id:
+        return HTMLResponse(
+            "<h2>Connection failed or was cancelled.</h2><p>Go back to Telegram and try again.</p>",
+            status_code=400,
+        )
+
+    try:
+        tokens = exchange_code_for_tokens(code)
+        refresh_token = tokens.get("refresh_token")
+        if not refresh_token:
+            # Happens if the user had already granted consent before and Google
+            # didn't re-issue a refresh_token - prompt=consent in build_auth_url
+            # is meant to prevent this, but handle it defensively anyway.
+            return HTMLResponse(
+                "<h2>Almost there</h2><p>Please revoke Atlas's access in your "
+                "<a href='https://myaccount.google.com/permissions' target='_blank'>Google account permissions</a> "
+                "and try connecting again from Telegram.</p>",
+                status_code=400,
+            )
+
+        db = SessionLocal()
+        try:
+            user = get_or_create_user(db, telegram_id)
+            user.google_refresh_token = refresh_token
+            db.commit()
+        finally:
+            db.close()
+
+        return HTMLResponse(
+            "<h2>Connected! ✅</h2><p>You can close this tab and go back to Telegram.</p>"
+        )
+    except Exception as exc:
+        print(f"[OAuth callback error] {type(exc).__name__}: {exc}")
+        return HTMLResponse("<h2>Something went wrong connecting your account.</h2>", status_code=500)

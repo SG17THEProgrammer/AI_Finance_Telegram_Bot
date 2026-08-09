@@ -172,6 +172,45 @@ TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "connect_google_sheets",
+            "description": (
+                "Call this when the user wants to connect their Google account for Sheets "
+                "access (e.g. 'connect my google sheet', 'link my sheets'). Returns a real "
+                "authorization link - share it with the user exactly as returned, formatted "
+                "as a normal clickable link in your reply. Do not call this if the user is "
+                "already connected (check profile info) unless they explicitly ask to "
+                "reconnect."
+            ),
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_google_sheet",
+            "description": (
+                "Read data from a Google Sheet the user has pasted a link to. Only works if "
+                "the user has already connected their Google account (check profile info) - "
+                "if not connected, tell them to connect first rather than calling this. "
+                "Returns the actual cell values - analyze/answer based only on this real data, "
+                "never invent rows or figures not present in the returned values. Use the "
+                "calculate tool for any sums/totals derived from the sheet data."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "sheet_url": {
+                        "type": "string",
+                        "description": "The Google Sheets URL (or bare sheet ID) the user shared",
+                    }
+                },
+                "required": ["sheet_url"],
+            },
+        },
+    },
 ]
 
 
@@ -238,5 +277,17 @@ def execute_tool_call(db, telegram_id: str, tool_name: str, arguments: dict) -> 
     if tool_name == "calculate":
         from app.calculator import safe_calculate
         return json.dumps(safe_calculate(arguments.get("expression", "")))
+
+    if tool_name == "connect_google_sheets":
+        from app.google_oauth import build_auth_url
+        link = build_auth_url(telegram_id)
+        return json.dumps({"auth_link": link})
+
+    if tool_name == "read_google_sheet":
+        from app.google_sheets import get_sheet_data
+        user = db.query(User).filter(User.telegram_id == telegram_id).first()
+        if not user or not user.google_refresh_token:
+            return json.dumps({"error": "Not connected yet - the user needs to connect their Google account first."})
+        return json.dumps(get_sheet_data(user.google_refresh_token, arguments.get("sheet_url", "")))
 
     return f"error: unknown tool {tool_name}"

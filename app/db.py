@@ -22,6 +22,7 @@ class User(Base):
     language_pref = Column(String, nullable=True)   # detected/preferred language
     onboarded = Column(Integer, default=0)           # 0/1 flag
     pending_transcript = Column(Text, nullable=True)  # awaiting yes/no confirmation from a voice message
+    google_refresh_token = Column(Text, nullable=True)  # Google Sheets OAuth - present once connected
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 

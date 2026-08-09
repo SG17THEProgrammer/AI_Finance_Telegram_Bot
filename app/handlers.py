@@ -46,11 +46,12 @@ def build_profile_summary(user) -> str:
     """A short block appended to the system prompt so the LLM knows what it
     already knows about this user, and whether onboarding is done."""
     name_part = f"Name: {user.first_name}. " if user.first_name else ""
+    sheets_part = "Google Sheets: connected. " if user.google_refresh_token else "Google Sheets: not connected. "
 
     if not user.onboarded:
-        return f"USER PROFILE: {name_part}Not onboarded yet. No other confirmed details so far."
+        return f"USER PROFILE: {name_part}{sheets_part}Not onboarded yet. No other confirmed details so far."
 
-    parts = [f"USER PROFILE: {name_part}Onboarded."]
+    parts = [f"USER PROFILE: {name_part}{sheets_part}Onboarded."]
     if user.role:
         parts.append(f"Role: {user.role}.")
     if user.sectors:

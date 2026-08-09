@@ -11,7 +11,7 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 # not just for voice - this mirrors the reference bot's config, which requires
 # both keys for the same reason.
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 
 # Fallback chat model if Gemini is unavailable, plus used for voice transcription later
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
@@ -20,6 +20,10 @@ GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
 FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY", "")
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./atlas.db")
 PUBLIC_WEBHOOK_URL = os.getenv("PUBLIC_WEBHOOK_URL", "")
+
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
+GOOGLE_REDIRECT_URI = f"{PUBLIC_WEBHOOK_URL}/oauth2callback" if PUBLIC_WEBHOOK_URL else ""
 
 if not TELEGRAM_BOT_TOKEN:
     print("[WARN] TELEGRAM_BOT_TOKEN is not set. Fill it in your .env file.")
