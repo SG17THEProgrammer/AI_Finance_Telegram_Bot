@@ -8,6 +8,7 @@ unprompted, exactly per the brief's "Daily Intelligence" requirement.
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from sqlalchemy import or_
 
 from app.db import SessionLocal, User
 from app.llm import get_reply
@@ -68,7 +69,7 @@ async def _check_and_send_briefings(bot):
             .filter(
                 User.briefing_time.isnot(None),
                 User.briefing_time == current_time_str,
-                User.last_briefing_date != today_str,
+                or_(User.last_briefing_date.is_(None), User.last_briefing_date != today_str),
             )
             .all()
         )
