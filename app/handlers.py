@@ -69,9 +69,17 @@ def _to_telegram_markdown(text: str) -> str:
     sitting right next to a converted *bold* span creates ambiguous/mismatched
     asterisk pairs that make Telegram reject the WHOLE message. Fix: convert
     bullet markers to a bullet character that can never collide with bold
-    syntax, THEN convert **bold** -> *bold*."""
+    syntax, THEN convert **bold** -> *bold*.
+
+    CRITICAL: also escape underscores. Telegram's legacy Markdown treats
+    '_..._' as italic - any text with 2+ underscores (e.g. a URL with
+    'client_id', 'redirect_uri' query params) gets its underscores silently
+    STRIPPED when rendered, corrupting URLs and any other underscored text.
+    Escaping every underscore as '\\_' makes Telegram render it as a literal
+    underscore instead of treating it as formatting."""
     text = re.sub(r"(?m)^[\*\-]\s+", "• ", text)
     text = re.sub(r"\*\*(.+?)\*\*", r"*\1*", text)
+    text = text.replace("_", r"\_")
     return text
 
 
@@ -112,20 +120,29 @@ async def _keep_typing(context: ContextTypes.DEFAULT_TYPE, chat_id: int, stop_ev
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    telegram_id = str(update.effective_user.id)
-    first_name = update.effective_user.first_name
-
-    db = SessionLocal()
     try:
-        get_or_create_user(db, telegram_id, first_name)
-        save_message(db, telegram_id, "assistant", WELCOME_MESSAGE)
-    finally:
-        db.close()
+        telegram_id = str(update.effective_user.id)
+        first_name = update.effective_user.first_name
 
-    await _send(update, WELCOME_MESSAGE)
+        db = SessionLocal()
+        try:
+            get_or_create_user(db, telegram_id, first_name)
+            save_message(db, telegram_id, "assistant", WELCOME_MESSAGE)
+        finally:
+            db.close()
+
+        await _send(update, WELCOME_MESSAGE)
+    except Exception as exc:
+        import traceback
+        print(f"[start_command CRASH] {type(exc).__name__}: {exc}")
+        traceback.print_exc()
+        try:
+            await update.message.reply_text("Something went wrong starting up - please try again.")
+        except Exception:
+            pass
 
 
-async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def _handle_text_inner(update: Update, context: ContextTypes.DEFAULT_TYPE):
     telegram_id = str(update.effective_user.id)
     first_name = update.effective_user.first_name
     user_text = update.message.text
@@ -202,7 +219,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _send(update, reply_text)
 
 
-async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def _handle_voice_inner(update: Update, context: ContextTypes.DEFAULT_TYPE):
     telegram_id = str(update.effective_user.id)
     first_name = update.effective_user.first_name
     chat_id = update.effective_chat.id
@@ -254,7 +271,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _send(update, confirm_prompt)
 
 
-async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def _handle_photo_inner(update: Update, context: ContextTypes.DEFAULT_TYPE):
     telegram_id = str(update.effective_user.id)
     first_name = update.effective_user.first_name
     chat_id = update.effective_chat.id
@@ -298,7 +315,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _send(update, reply_text)
 
 
-async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def _handle_document_inner(update: Update, context: ContextTypes.DEFAULT_TYPE):
     telegram_id = str(update.effective_user.id)
     first_name = update.effective_user.first_name
     chat_id = update.effective_chat.id
@@ -349,3 +366,37 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await typing_task
 
     await _send(update, reply_text)
+
+
+# ── Safety wrappers: catch anything unhandled so a bug means "sorry, error"
+# instead of total silence, which is impossible to diagnose from the user side ──
+
+async def _safe_wrap(inner_fn, update: Update, context: ContextTypes.DEFAULT_TYPE, label: str):
+    try:
+        await inner_fn(update, context)
+    except Exception as exc:
+        import traceback
+        print(f"[{label} CRASH] {type(exc).__name__}: {exc}")
+        traceback.print_exc()
+        try:
+            await update.message.reply_text(
+                "Something went wrong on my end - please try again in a moment."
+            )
+        except Exception:
+            pass
+
+
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _safe_wrap(_handle_text_inner, update, context, "handle_text")
+
+
+async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _safe_wrap(_handle_voice_inner, update, context, "handle_voice")
+
+
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _safe_wrap(_handle_photo_inner, update, context, "handle_photo")
+
+
+async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _safe_wrap(_handle_document_inner, update, context, "handle_document")
