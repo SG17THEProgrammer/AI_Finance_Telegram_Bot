@@ -66,7 +66,7 @@ async def _check_and_send_briefings(bot):
         candidates = (
             db.query(User)
             .filter(
-                User.onboarded == 1,
+                User.briefing_time.isnot(None),
                 User.briefing_time == current_time_str,
                 User.last_briefing_date != today_str,
             )
