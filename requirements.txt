@@ -8,3 +8,4 @@ python-telegram-bot==22.8
 uvicorn==0.52.1
 yfinance==1.5.2
 groq
+pypdf
