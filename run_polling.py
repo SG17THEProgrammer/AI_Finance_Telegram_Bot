@@ -12,12 +12,17 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 from app.config import TELEGRAM_BOT_TOKEN
 from app.db import init_db
 from app.handlers import start_command, handle_text, handle_voice, handle_photo, handle_document
+from app.scheduler import start_scheduler
+
+
+async def _post_init(application):
+    start_scheduler(application.bot)
 
 
 def main():
     init_db()
 
-    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).post_init(_post_init).build()
 
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))

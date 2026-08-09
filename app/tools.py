@@ -34,7 +34,7 @@ TOOLS = [
                     },
                     "briefing_time": {
                         "type": "string",
-                        "description": "Preferred time for daily briefing, e.g. '08:00' or '8am IST'",
+                        "description": "Preferred daily briefing time, in 24-hour HH:MM format, e.g. '08:00' or '18:30'. Convert whatever the user says (e.g. '8am', '6:30 in the evening') into this exact format before saving - this is required for scheduling to work correctly.",
                     },
                 },
                 "required": [],

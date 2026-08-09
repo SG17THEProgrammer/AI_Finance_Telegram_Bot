@@ -23,6 +23,7 @@ class User(Base):
     onboarded = Column(Integer, default=0)           # 0/1 flag
     pending_transcript = Column(Text, nullable=True)  # awaiting yes/no confirmation from a voice message
     google_refresh_token = Column(Text, nullable=True)  # Google Sheets OAuth - present once connected
+    last_briefing_date = Column(String, nullable=True)  # "YYYY-MM-DD" - prevents duplicate daily sends
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
