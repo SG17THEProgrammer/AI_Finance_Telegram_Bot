@@ -1,0 +1,9 @@
+.env
+__pycache__/
+*.pyc
+venv/
+.venv/
+atlas.db
+*.db
+.DS_Store
+Atlas AI
