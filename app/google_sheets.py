@@ -7,8 +7,8 @@ import httpx
 
 from app.google_oauth import get_access_token
 
-_SHEET_ID_PATTERN = re.compile(r"/spreadsheets/d/([a-zA-Z0-9_-]+)")
-
+_SHEET_ID_PATTERN = re.compile(
+    r"/spreadsheets/d/([a-zA-Z0-9_-]+)")
 
 def extract_sheet_id(url_or_id: str) -> str:
     """Accepts a full Google Sheets URL or a bare sheet ID, returns the ID."""
