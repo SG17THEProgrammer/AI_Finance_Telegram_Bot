@@ -1,3 +1,4 @@
+import re as _re  # local alias to avoid clashing with the module-level `re` used below
 import re
 import asyncio
 from telegram import Update
@@ -19,9 +20,6 @@ WELCOME_MESSAGE = (
     "No commands or menus needed — just tell me what's on your mind. "
     "Try something like \"what's moving in the market today\" or \"tell me about Tesla\"."
 )
-
-
-import re as _re  # local alias to avoid clashing with the module-level `re` used below
 
 
 _AFFIRMATIVE_PATTERN = _re.compile(
@@ -136,6 +134,7 @@ async def _require_owner(update: Update) -> bool:
 
     return True
 
+
 async def _deny_if_not_allowed(update: Update) -> bool:
     user = update.effective_user
     if not user:
@@ -170,11 +169,15 @@ async def allow_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db = SessionLocal()
 
     try:
-        await allow_target(db, username , context.args[0])
+        tid, username, added = await allow_target(db, context.bot, context.args[0])
+
+        label = "@" + username if username else tid
 
         await update.effective_message.reply_text(
-            f"@{username} is now allowed ✅"
-        )
+                    f"{label} is {'now allowed' if added else 'already allowed'} ✅"
+                    + ("\nThey can use Atlas immediately — no redeploy needed." if added else "")
+                )
+        
     except Exception as exc:
         print(f"[allow_command] {type(exc).__name__}: {exc}")
 
@@ -200,7 +203,7 @@ async def remove_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db = SessionLocal()
 
     try:
-        removed = await remove_target(db, username , context.args[0])
+        removed = await remove_target(db, context.bot, context.args[0])
 
         if removed:
             await update.effective_message.reply_text(
@@ -289,7 +292,8 @@ async def _handle_text_inner(update: Update, context: ContextTypes.DEFAULT_TYPE)
     chat_id = update.effective_chat.id
 
     stop_typing = asyncio.Event()
-    typing_task = asyncio.create_task(_keep_typing(context, chat_id, stop_typing))
+    typing_task = asyncio.create_task(
+        _keep_typing(context, chat_id, stop_typing))
 
     db = SessionLocal()
     try:
@@ -367,7 +371,8 @@ async def _handle_voice_inner(update: Update, context: ContextTypes.DEFAULT_TYPE
     chat_id = update.effective_chat.id
 
     stop_typing = asyncio.Event()
-    typing_task = asyncio.create_task(_keep_typing(context, chat_id, stop_typing))
+    typing_task = asyncio.create_task(
+        _keep_typing(context, chat_id, stop_typing))
 
     db = SessionLocal()
     try:
@@ -422,7 +427,8 @@ async def _handle_photo_inner(update: Update, context: ContextTypes.DEFAULT_TYPE
     caption = update.message.caption or ""
 
     stop_typing = asyncio.Event()
-    typing_task = asyncio.create_task(_keep_typing(context, chat_id, stop_typing))
+    typing_task = asyncio.create_task(
+        _keep_typing(context, chat_id, stop_typing))
 
     db = SessionLocal()
     try:
@@ -475,7 +481,8 @@ async def _handle_document_inner(update: Update, context: ContextTypes.DEFAULT_T
         return
 
     stop_typing = asyncio.Event()
-    typing_task = asyncio.create_task(_keep_typing(context, chat_id, stop_typing))
+    typing_task = asyncio.create_task(
+        _keep_typing(context, chat_id, stop_typing))
 
     db = SessionLocal()
     try:
