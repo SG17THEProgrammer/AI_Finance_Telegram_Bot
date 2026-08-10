@@ -24,14 +24,14 @@ def build_auth_url(telegram_id: str) -> str:
     }
 
     print("========== GOOGLE OAUTH DEBUG ==========")
-    print("PARAM KEYS:", [repr(k) for k in params.keys()])
-    print("PARAMS:", repr(params))
+    # print("PARAM KEYS:", [repr(k) for k in params.keys()])
+    # print("PARAMS:", repr(params))
 
     url = f"{AUTH_ENDPOINT}?{urlencode(params)}"
 
     print("FINAL URL:", repr(url))
-    print("HAS BACKSLASH:", "\\" in url)
-    print("=========================================")
+    # print("HAS BACKSLASH:", "\\" in url)
+    # print("=========================================")
 
     return url
 
