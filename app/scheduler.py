@@ -10,7 +10,8 @@ from zoneinfo import ZoneInfo
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import or_
 
-from app.db import SessionLocal, User
+from app.db import SessionLocal, User, AllowedUser
+from app.config import OWNER_TELEGRAM_IDS
 from app.llm import get_reply
 from app.handlers import build_profile_summary, _to_telegram_markdown
 
@@ -31,7 +32,7 @@ BRIEFING_TRIGGER_PROMPT = (
 async def _send_briefing(bot, user_id: int):
     db = SessionLocal()
     try:
-        user = db.query(User).filter(User.id == user_id).first()
+        user = db.query(User).join(AllowedUser, AllowedUser.telegram_id == User.telegram_id).filter(User.id == user_id).first()
         if not user:
             return
 
@@ -74,6 +75,11 @@ async def _check_and_send_briefings(bot):
             )
             .all()
         )
+        candidates = [
+            u for u in candidates
+            if u.telegram_id in OWNER_TELEGRAM_IDS
+            or db.query(AllowedUser).filter(AllowedUser.telegram_id == u.telegram_id).first() is not None
+        ]
         user_ids = [u.id for u in candidates]
     finally:
         db.close()

@@ -15,7 +15,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 
 from app.config import TELEGRAM_BOT_TOKEN, PUBLIC_WEBHOOK_URL
 from app.db import init_db, SessionLocal, get_or_create_user
-from app.handlers import start_command, handle_text, handle_voice, handle_photo, handle_document
+from app.handlers import start_command, handle_text, handle_voice, handle_photo, handle_document, allow_command, remove_command, allowed_command, id_command
 from app.google_oauth import exchange_code_for_tokens
 from app.scheduler import start_scheduler
 

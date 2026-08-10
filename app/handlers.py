@@ -6,6 +6,7 @@ from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
 from app.db import SessionLocal, get_or_create_user, save_message, get_recent_history
+from app.access_control import is_owner, is_allowed, record_allowed_user, allow_target, remove_target, allowed_list
 from app.llm import get_reply, get_reply_with_image, get_reply_with_document
 from app.media import transcribe_voice, extract_pdf_text
 
@@ -119,8 +120,102 @@ async def _keep_typing(context: ContextTypes.DEFAULT_TYPE, chat_id: int, stop_ev
             pass
 
 
+
+async def _deny_if_not_allowed(update: Update) -> bool:
+    user = update.effective_user
+    if not user:
+        return True
+    db = SessionLocal()
+    try:
+        allowed = is_allowed(update, db)
+        if allowed:
+            record_allowed_user(db, update)
+            return False
+    finally:
+        db.close()
+    await update.effective_message.reply_text(
+        "Sorry — this bot is currently invite-only.\n\n"
+        "Ask the owner to add your Telegram username before using Atlas."
+    )
+    return True
+
+
+async def allow_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_owner(update):
+        await update.effective_message.reply_text("This command is only available to the bot owner.")
+        return
+    if not context.args:
+        await update.effective_message.reply_text("Usage: /allow @username  (or /allow 123456789)")
+        return
+    db = SessionLocal()
+    try:
+        try:
+            tid, username, added = await allow_target(db, context.bot, context.args[0])
+        except ValueError as exc:
+            await update.effective_message.reply_text(str(exc))
+            return
+        label = "@" + username if username else tid
+        await update.effective_message.reply_text(
+            f"{label} is {'now allowed' if added else 'already allowed'} ✅"
+            + ("\nThey can use Atlas immediately — no redeploy needed." if added else "")
+        )
+    finally:
+        db.close()
+
+
+async def remove_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_owner(update):
+        await update.effective_message.reply_text("This command is only available to the bot owner.")
+        return
+    if not context.args:
+        await update.effective_message.reply_text("Usage: /remove @username  (or /remove 123456789)")
+        return
+    db = SessionLocal()
+    try:
+        try:
+            tid, username, removed = await remove_target(db, context.bot, context.args[0])
+        except ValueError as exc:
+            await update.effective_message.reply_text(str(exc))
+            return
+        label = "@" + username if username else tid
+        await update.effective_message.reply_text(
+            f"{label} {'has been removed 🚫' if removed else 'was not on the allowlist.'}"
+        )
+    finally:
+        db.close()
+
+
+async def allowed_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_owner(update):
+        await update.effective_message.reply_text("This command is only available to the bot owner.")
+        return
+    db = SessionLocal()
+    try:
+        rows = allowed_list(db)
+        if not rows:
+            await update.effective_message.reply_text("No database allowlist entries yet.")
+            return
+        lines = ["Current Atlas allowlist:"]
+        for row in rows:
+            label = "@" + row.username if row.username else row.telegram_id
+            lines.append(f"• {label} — {row.telegram_id}" + (" (owner)" if row.is_owner else ""))
+        await update.effective_message.reply_text("\n".join(lines))
+    finally:
+        db.close()
+
+
+async def id_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    username = "@" + user.username if user.username else "not set"
+    await update.effective_message.reply_text(
+        f"Your Telegram ID is: {user.id}\nUsername: {username}"
+    )
+
+
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
+        if await _deny_if_not_allowed(update):
+            return
         telegram_id = str(update.effective_user.id)
         first_name = update.effective_user.first_name
 
@@ -143,6 +238,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def _handle_text_inner(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await _deny_if_not_allowed(update):
+        return
     telegram_id = str(update.effective_user.id)
     first_name = update.effective_user.first_name
     user_text = update.message.text
@@ -220,6 +317,8 @@ async def _handle_text_inner(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 async def _handle_voice_inner(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await _deny_if_not_allowed(update):
+        return
     telegram_id = str(update.effective_user.id)
     first_name = update.effective_user.first_name
     chat_id = update.effective_chat.id
@@ -272,6 +371,8 @@ async def _handle_voice_inner(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def _handle_photo_inner(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await _deny_if_not_allowed(update):
+        return
     telegram_id = str(update.effective_user.id)
     first_name = update.effective_user.first_name
     chat_id = update.effective_chat.id
@@ -316,6 +417,8 @@ async def _handle_photo_inner(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def _handle_document_inner(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await _deny_if_not_allowed(update):
+        return
     telegram_id = str(update.effective_user.id)
     first_name = update.effective_user.first_name
     chat_id = update.effective_chat.id

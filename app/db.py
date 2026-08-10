@@ -27,6 +27,17 @@ class User(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
+class AllowedUser(Base):
+    __tablename__ = "allowed_users"
+
+    id = Column(Integer, primary_key=True)
+    telegram_id = Column(String, unique=True, index=True, nullable=False)
+    username = Column(String, nullable=True)
+    first_name = Column(String, nullable=True)
+    is_owner = Column(Integer, default=0)
+    added_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 class Message(Base):
     __tablename__ = "messages"
 

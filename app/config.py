@@ -25,6 +25,30 @@ GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
 GOOGLE_REDIRECT_URI = f"{PUBLIC_WEBHOOK_URL}/oauth2callback" if PUBLIC_WEBHOOK_URL else ""
 
+# Invite-only Telegram access
+#
+# Usernames are used so you do not need to know the numeric Telegram IDs
+# of judges/users in advance. Once an allowed user messages the bot,
+# their Telegram ID is stored in the database and used from then on.
+
+OWNER_TELEGRAM_IDS = {
+    value.strip()
+for value in os.getenv("OWNER_TELEGRAM_IDS", "").split(",")
+    if value.strip()
+}
+
+OWNER_TELEGRAM_USERNAMES = {
+    value.strip().lstrip("@").lower()
+    for value in os.getenv("OWNER_TELEGRAM_USERNAMES", "").split(",")
+    if value.strip()
+}
+
+ALLOWED_TELEGRAM_USERNAMES = {
+    value.strip().lstrip("@").lower()
+    for value in os.getenv("ALLOWED_TELEGRAM_USERNAMES", "").split(",")
+    if value.strip()
+}
+
 if not TELEGRAM_BOT_TOKEN:
     print("[WARN] TELEGRAM_BOT_TOKEN is not set. Fill it in your .env file.")
 if not GEMINI_API_KEY:
