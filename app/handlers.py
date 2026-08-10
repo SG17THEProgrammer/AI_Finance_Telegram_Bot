@@ -164,7 +164,7 @@ async def allow_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    username = context.args[0].lstrip("@").lower()
+    username = context.args[0].lstrip("@")
 
     db = SessionLocal()
 
@@ -198,7 +198,7 @@ async def remove_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    username = context.args[0].lstrip("@").lower()
+    username = context.args[0].lstrip("@")
 
     db = SessionLocal()
 
