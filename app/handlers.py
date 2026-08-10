@@ -14,12 +14,12 @@ from app.media import transcribe_voice, extract_pdf_text
 
 WELCOME_MESSAGE = (
     "Hey, I'm Atlas 👋 — your AI finance analyst, right here on Telegram.\n\n"
-    "I can help you track stocks, research companies, make sense of market news, "
-    "read financial documents, and just talk through your finance questions like "
-    "you would with an analyst on your team.\n\n"
-    "No commands or menus needed — just tell me what's on your mind. "
-    "Try something like \"what's moving in the market today\" or \"tell me about Tesla\"."
+    "I can help you research companies, track markets, analyze financial news "
+    "and documents, and answer your finance questions.\n\n"
+    "For a personalized experience, you can share your role, sectors you follow, "
+    "watchlist or skip all these things and ask me a question directly.\n\n"
 )
+
 
 
 _AFFIRMATIVE_PATTERN = _re.compile(
