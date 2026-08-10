@@ -9,7 +9,7 @@ def _norm_username(username):
     if not username:
         return None
 
-    return username.lstrip("@").strip().lower() or None
+    return username.lstrip("@").strip() or None
 
 
 def is_owner(update):

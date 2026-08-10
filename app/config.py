@@ -38,13 +38,13 @@ for value in os.getenv("OWNER_TELEGRAM_IDS", "").split(",")
 }
 
 OWNER_TELEGRAM_USERNAMES = {
-    value.strip().lstrip("@").lower()
+    value.strip().lstrip("@")
     for value in os.getenv("OWNER_TELEGRAM_USERNAMES", "").split(",")
     if value.strip()
 }
 
 ALLOWED_TELEGRAM_USERNAMES = {
-    value.strip().lstrip("@").lower()
+    value.strip().lstrip("@")
     for value in os.getenv("ALLOWED_TELEGRAM_USERNAMES", "").split(",")
     if value.strip()
 }
