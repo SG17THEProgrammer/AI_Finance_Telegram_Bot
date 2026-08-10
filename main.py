@@ -21,6 +21,9 @@ from app.scheduler import start_scheduler
 
 telegram_app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
 telegram_app.add_handler(CommandHandler("start", start_command))
+telegram_app.add_handler(CommandHandler("allow", allow_command))
+telegram_app.add_handler(CommandHandler("remove", remove_command))
+telegram_app.add_handler(CommandHandler("allowed", allowed_command))
 telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 telegram_app.add_handler(MessageHandler(filters.VOICE, handle_voice))
 telegram_app.add_handler(MessageHandler(filters.PHOTO, handle_photo))

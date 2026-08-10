@@ -4,6 +4,7 @@ from telegram import Update
 from telegram.constants import ParseMode, ChatAction
 from telegram.error import BadRequest
 from telegram.ext import ContextTypes
+from telegram.ext import CommandHandler
 
 from app.db import SessionLocal, get_or_create_user, save_message, get_recent_history
 from app.access_control import is_owner, is_allowed, record_allowed_user, allow_target, remove_target, allowed_list
@@ -120,6 +121,20 @@ async def _keep_typing(context: ContextTypes.DEFAULT_TYPE, chat_id: int, stop_ev
             pass
 
 
+async def _require_owner(update: Update) -> bool:
+    """
+    Returns True if the current Telegram user is the owner.
+    Otherwise sends a response and returns False.
+    """
+
+    if not is_owner(update):
+        await update.effective_message.reply_text(
+            "Sorry — this bot is currently invite-only.\n\n"
+            "Only the owner can manage access."
+        )
+        return False
+
+    return True
 
 async def _deny_if_not_allowed(update: Update) -> bool:
     user = update.effective_user
@@ -141,65 +156,93 @@ async def _deny_if_not_allowed(update: Update) -> bool:
 
 
 async def allow_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_owner(update):
-        await update.effective_message.reply_text("This command is only available to the bot owner.")
+    if not await _require_owner(update):
         return
+
     if not context.args:
-        await update.effective_message.reply_text("Usage: /allow @username  (or /allow 123456789)")
-        return
-    db = SessionLocal()
-    try:
-        try:
-            tid, username, added = await allow_target(db, context.bot, context.args[0])
-        except ValueError as exc:
-            await update.effective_message.reply_text(str(exc))
-            return
-        label = "@" + username if username else tid
         await update.effective_message.reply_text(
-            f"{label} is {'now allowed' if added else 'already allowed'} ✅"
-            + ("\nThey can use Atlas immediately — no redeploy needed." if added else "")
+            "Usage: /allow @username"
+        )
+        return
+
+    username = context.args[0].lstrip("@").lower()
+
+    db = SessionLocal()
+
+    try:
+        allow_target(db, username)
+
+        await update.effective_message.reply_text(
+            f"@{username} is now allowed ✅"
+        )
+    except Exception as exc:
+        print(f"[allow_command] {type(exc).__name__}: {exc}")
+
+        await update.effective_message.reply_text(
+            "I couldn't update the access list right now."
         )
     finally:
         db.close()
 
 
 async def remove_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_owner(update):
-        await update.effective_message.reply_text("This command is only available to the bot owner.")
+    if not await _require_owner(update):
         return
+
     if not context.args:
-        await update.effective_message.reply_text("Usage: /remove @username  (or /remove 123456789)")
-        return
-    db = SessionLocal()
-    try:
-        try:
-            tid, username, removed = await remove_target(db, context.bot, context.args[0])
-        except ValueError as exc:
-            await update.effective_message.reply_text(str(exc))
-            return
-        label = "@" + username if username else tid
         await update.effective_message.reply_text(
-            f"{label} {'has been removed 🚫' if removed else 'was not on the allowlist.'}"
+            "Usage: /remove @username"
+        )
+        return
+
+    username = context.args[0].lstrip("@").lower()
+
+    db = SessionLocal()
+
+    try:
+        removed = remove_target(db, username)
+
+        if removed:
+            await update.effective_message.reply_text(
+                f"@{username} has been removed 🚫"
+            )
+        else:
+            await update.effective_message.reply_text(
+                f"@{username} wasn't in the access list."
+            )
+    except Exception as exc:
+        print(f"[remove_command] {type(exc).__name__}: {exc}")
+
+        await update.effective_message.reply_text(
+            "I couldn't update the access list right now."
         )
     finally:
         db.close()
 
 
 async def allowed_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_owner(update):
-        await update.effective_message.reply_text("This command is only available to the bot owner.")
+    if not await _require_owner(update):
         return
+
     db = SessionLocal()
+
     try:
-        rows = allowed_list(db)
-        if not rows:
-            await update.effective_message.reply_text("No database allowlist entries yet.")
+        users = allowed_list(db)
+
+        if not users:
+            await update.effective_message.reply_text(
+                "No additional users are currently allowed."
+            )
             return
-        lines = ["Current Atlas allowlist:"]
-        for row in rows:
-            label = "@" + row.username if row.username else row.telegram_id
-            lines.append(f"• {label} — {row.telegram_id}" + (" (owner)" if row.is_owner else ""))
+
+        lines = ["Allowed users:"]
+
+        for user in users:
+            username = user.username or "(no username)"
+            lines.append(f"• @{username}")
+
         await update.effective_message.reply_text("\n".join(lines))
+
     finally:
         db.close()
 
