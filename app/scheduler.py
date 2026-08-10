@@ -19,11 +19,12 @@ IST = ZoneInfo("Asia/Kolkata")
 BRIEFING_TRIGGER_PROMPT = (
     "[This is an automated daily briefing trigger, not a message from the user - "
     "generate their proactive morning briefing now.] Give the user a concise daily "
-    "market briefing based on their followed sectors/watchlist: what's moved, any "
-    "notable news, anything genuinely worth their attention today. Use your tools "
-    "to pull real current data - don't guess. If there's genuinely nothing notable "
-    "for their specific interests today, say so briefly rather than padding with "
-    "generic content. Keep it short and scannable, same style as always."
+    "market briefing. If they have followed sectors/watchlist, personalize to that: "
+    "what's moved, any notable news, anything genuinely worth their attention today. "
+    "If they have NO watchlist/sectors saved yet, give a brief general market snapshot "
+    "instead (major indices, 1-2 significant headlines) - never send nothing just "
+    "because there's no personalization yet. Use your tools to pull real current data "
+    "- don't guess. Keep it short and scannable, same style as always."
 )
 
 

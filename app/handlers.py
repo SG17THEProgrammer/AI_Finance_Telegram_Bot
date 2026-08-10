@@ -95,7 +95,7 @@ async def _send(update: Update, text: str):
     """Send with Markdown formatting, but never let a malformed-markdown edge
     case crash the bot or leak raw asterisks - fall back to clean plain text
     if Telegram's parser rejects the formatted version."""
-    print(f"[About to send - RAW, pre-formatting] {text!r}")
+    # print(f"[About to send - RAW, pre-formatting] {text!r}")
     formatted = _to_telegram_markdown(text)
     try:
         await update.message.reply_text(formatted, parse_mode=ParseMode.MARKDOWN)

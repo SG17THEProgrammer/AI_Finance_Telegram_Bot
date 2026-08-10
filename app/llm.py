@@ -67,7 +67,7 @@ def _get_reply_gemini(db, telegram_id, history_rows, current_user_message, syste
         system_instruction=system_instruction,
         tools=GEMINI_TOOLS,
         temperature=0.6,
-        max_output_tokens=700,
+        max_output_tokens=1100,  # room for explicit "detailed report" requests; short replies stay short regardless
     )
 
     for _ in range(MAX_TOOL_ROUNDS):
@@ -80,7 +80,7 @@ def _get_reply_gemini(db, telegram_id, history_rows, current_user_message, syste
 
         if not function_calls:
             text = response.text
-            print(f"[Gemini RAW OUTPUT] finish_reason={candidate.finish_reason!r} text={text!r}")
+            # print(f"[Gemini RAW OUTPUT] finish_reason={candidate.finish_reason!r} text={text!r}")
             if not text:
                 return "Sorry, I didn't quite get that - could you rephrase?"
             return _clean_if_truncated(text.strip(), candidate.finish_reason)
@@ -123,14 +123,14 @@ def _get_reply_groq(db, telegram_id, history_rows, current_user_message, system_
             tools=TOOLS,
             tool_choice="auto",
             temperature=0.6,
-            max_tokens=600,
+            max_tokens=1000,  # room for explicit "detailed report" requests
         )
         response_message = completion.choices[0].message
 
         if not response_message.tool_calls:
             content = response_message.content
             finish_reason = completion.choices[0].finish_reason
-            print(f"[Groq RAW OUTPUT] finish_reason={finish_reason!r} text={content!r}")
+            # print(f"[Groq RAW OUTPUT] finish_reason={finish_reason!r} text={content!r}")
             return _clean_if_truncated(content.strip(), finish_reason)
 
         messages.append(response_message)
@@ -187,7 +187,7 @@ def get_reply_with_image(
 
         if not function_calls:
             text = response.text
-            print(f"[Gemini IMAGE RAW OUTPUT] finish_reason={candidate.finish_reason!r} text={text!r}")
+            # print(f"[Gemini IMAGE RAW OUTPUT] finish_reason={candidate.finish_reason!r} text={text!r}")
             if not text:
                 return "I couldn't make sense of that image - could you try a clearer screenshot?"
             return _clean_if_truncated(text.strip(), candidate.finish_reason)
@@ -282,7 +282,7 @@ def get_reply_with_document(
 
         if not function_calls:
             text = response.text
-            print(f"[Gemini DOCUMENT RAW OUTPUT] finish_reason={candidate.finish_reason!r} text={text!r}")
+            # print(f"[Gemini DOCUMENT RAW OUTPUT] finish_reason={candidate.finish_reason!r} text={text!r}")
             if not text:
                 return "I couldn't read that document - could you try re-uploading it?"
             return _clean_if_truncated(text.strip(), candidate.finish_reason)
