@@ -21,9 +21,13 @@ FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY", "")
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./atlas.db")
 PUBLIC_WEBHOOK_URL = os.getenv("PUBLIC_WEBHOOK_URL", "")
 
-GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
-GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
-GOOGLE_REDIRECT_URI = f"{PUBLIC_WEBHOOK_URL}/oauth2callback" if PUBLIC_WEBHOOK_URL else ""
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
+
+GOOGLE_REDIRECT_URI = os.getenv(
+    "GOOGLE_REDIRECT_URI",
+    f"{os.getenv('PUBLIC_WEBHOOK_URL')}/oauth2callback"
+)
 
 # Invite-only Telegram access
 #

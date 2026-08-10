@@ -56,5 +56,4 @@ def get_access_token(refresh_token: str) -> str:
     )
 
     resp.raise_for_status()
-
     return resp.json()["access_token"]
