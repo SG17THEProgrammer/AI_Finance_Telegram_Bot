@@ -170,7 +170,7 @@ async def allow_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db = SessionLocal()
 
     try:
-        allow_target(db, username , context.args[0])
+        await allow_target(db, username , context.args[0])
 
         await update.effective_message.reply_text(
             f"@{username} is now allowed ✅"
@@ -200,7 +200,7 @@ async def remove_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db = SessionLocal()
 
     try:
-        removed = remove_target(db, username , context.args[0])
+        removed = await remove_target(db, username , context.args[0])
 
         if removed:
             await update.effective_message.reply_text(
