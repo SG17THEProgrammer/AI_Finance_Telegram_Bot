@@ -29,7 +29,7 @@ def build_auth_url(telegram_id: str) -> str:
 
     url = f"{AUTH_ENDPOINT}?{urlencode(params)}"
 
-    print("FINAL URL:", repr(url))
+    # print("FINAL URL:", repr(url))
     # print("HAS BACKSLASH:", "\\" in url)
     # print("=========================================")
 
