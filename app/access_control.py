@@ -1,6 +1,6 @@
 """Invite-only Telegram access control. Runtime allowlist is stored in SQLite."""
 from datetime import datetime, timezone
-from app.config import OWNER_TELEGRAM_IDS, OWNER_TELEGRAM_USERNAMES, ALLOWED_TELEGRAM_USERNAMES
+from app.config import OWNER_TELEGRAM_IDS, OWNER_TELEGRAM_USERNAMES
 from app.db import AllowedUser
 
 def _norm_username(username):
@@ -56,8 +56,8 @@ def is_allowed(update, db):
             return True
 
     # 4. Configured judge / invited username from .env
-    if username and username in ALLOWED_TELEGRAM_USERNAMES:
-        return True
+    # if username and username in ALLOWED_TELEGRAM_USERNAMES:
+    #     return True
 
     return False
 

@@ -47,11 +47,11 @@ OWNER_TELEGRAM_USERNAMES = {
     if value.strip()
 }
 
-ALLOWED_TELEGRAM_USERNAMES = {
-    value.strip().lstrip("@")
-    for value in os.getenv("ALLOWED_TELEGRAM_USERNAMES", "").split(",")
-    if value.strip()
-}
+# ALLOWED_TELEGRAM_USERNAMES = {
+#     value.strip().lstrip("@")
+#     for value in os.getenv("ALLOWED_TELEGRAM_USERNAMES", "").split(",")
+#     if value.strip()
+# }
 
 if not TELEGRAM_BOT_TOKEN:
     print("[WARN] TELEGRAM_BOT_TOKEN is not set. Fill it in your .env file.")
