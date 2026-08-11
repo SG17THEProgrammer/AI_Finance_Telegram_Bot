@@ -1,21 +1,17 @@
-
 """Invite-only Telegram access control. Runtime allowlist is stored in SQLite."""
 from datetime import datetime, timezone
-from telegram.error import BadRequest, TelegramError
 from app.config import OWNER_TELEGRAM_IDS, OWNER_TELEGRAM_USERNAMES, ALLOWED_TELEGRAM_USERNAMES
 from app.db import AllowedUser
 
 def _norm_username(username):
     if not username:
         return None
-
     return username.lstrip("@").strip() or None
 
 
 def is_owner(update):
     """Check whether the current Telegram user is the bot owner."""
     user = update.effective_user
-
     if not user:
         return False
 
@@ -34,41 +30,32 @@ def is_owner(update):
 def is_allowed(update, db):
     """
     Check whether the current user is allowed.
-
-    We support:
-    1. Owner Telegram ID
-    2. Owner username
-    3. Previously stored allowed Telegram ID
-    4. Configured allowed username
     """
-
     user = update.effective_user
-
     if not user:
         return False
 
     telegram_id = str(user.id)
     username = _norm_username(user.username)
 
-    # Owner by ID
+    # 1. Owner checks
     if telegram_id in OWNER_TELEGRAM_IDS:
         return True
-
-    # Owner by username
     if username and username in OWNER_TELEGRAM_USERNAMES:
         return True
 
-    # Previously stored allowed Telegram ID
-    existing = (
-        db.query(AllowedUser)
-        .filter(AllowedUser.telegram_id == telegram_id)
-        .first()
-    )
-
+    # 2. Previously stored allowed Telegram ID
+    existing = db.query(AllowedUser).filter(AllowedUser.telegram_id == telegram_id).first()
     if existing:
         return True
 
-    # Configured judge / invited username
+    # 3. NEW: Check if there is a pending manual /allow for this username
+    if username:
+        pending = db.query(AllowedUser).filter(AllowedUser.username == username).first()
+        if pending:
+            return True
+
+    # 4. Configured judge / invited username from .env
     if username and username in ALLOWED_TELEGRAM_USERNAMES:
         return True
 
@@ -78,35 +65,36 @@ def is_allowed(update, db):
 def record_allowed_user(db, update):
     """
     Persist an allowed user's Telegram ID and current username.
-    This means future checks can use the stable Telegram ID.
+    Upgrades 'pending' usernames to real Telegram IDs.
     """
-
     user = update.effective_user
-
     if not user:
         return
 
     telegram_id = str(user.id)
     username = _norm_username(user.username)
 
-    row = (
-        db.query(AllowedUser)
-        .filter(AllowedUser.telegram_id == telegram_id)
-        .first()
-    )
-
+    # 1. Update if the real ID already exists
+    row = db.query(AllowedUser).filter(AllowedUser.telegram_id == telegram_id).first()
     if row:
         row.username = username
         row.first_name = user.first_name
         db.commit()
         return
 
+    # 2. NEW: Upgrade a pending username to a real ID
+    if username:
+        pending = db.query(AllowedUser).filter(AllowedUser.username == username).first()
+        if pending:
+            pending.telegram_id = telegram_id
+            pending.first_name = user.first_name
+            db.commit()
+            return
+
+    # 3. Create a brand new record
     is_owner_user = int(
         telegram_id in OWNER_TELEGRAM_IDS
-        or (
-            username
-            and username in OWNER_TELEGRAM_USERNAMES
-        )
+        or (username and username in OWNER_TELEGRAM_USERNAMES)
     )
 
     db.add(
@@ -118,48 +106,36 @@ def record_allowed_user(db, update):
             added_at=datetime.now(timezone.utc),
         )
     )
-
     db.commit()
 
 
 def _target(token):
     token = token.strip()
-
     if token.isdigit():
         return "id", token
-
     username = _norm_username(token)
-
     if username:
         return "username", username
+    raise ValueError("Use /allow @username or /allow 123456789.")
 
-    raise ValueError(
-        "Use /allow @username or /allow 123456789."
-    )
-
-
-def async_placeholder():
-    pass
-
-async def resolve_target(bot, token):
-    kind, value = _target(token)
-    if kind == "id":
-        return value, None
-    try:
-        chat = await bot.get_chat("@" + value)
-    except (BadRequest, TelegramError) as exc:
-        raise ValueError(
-            f"I couldn't find @{value}. Use the exact public username or numeric Telegram ID."
-        ) from exc
-    return str(chat.id), getattr(chat, "username", None)
 
 async def allow_target(db, bot, token):
-    tid, username = await resolve_target(bot, token)
-    row = db.query(AllowedUser).filter(AllowedUser.telegram_id == tid).first()
+    """Bypasses Telegram API and stores directly to the DB"""
+    kind, value = _target(token)
+    
+    if kind == "id":
+        tid = value
+        username = None
+        row = db.query(AllowedUser).filter(AllowedUser.telegram_id == tid).first()
+    else:
+        # Create a placeholder ID for new usernames
+        tid = f"pending_{value}" 
+        username = value
+        row = db.query(AllowedUser).filter(AllowedUser.username == username).first()
+
     if row:
-        row.username = username or row.username
-        db.commit()
-        return tid, row.username, False
+        return row.telegram_id, row.username, False # Already allowed
+
     db.add(AllowedUser(
         telegram_id=tid, username=username, is_owner=0,
         added_at=datetime.now(timezone.utc)
@@ -167,18 +143,26 @@ async def allow_target(db, bot, token):
     db.commit()
     return tid, username, True
 
+
 async def remove_target(db, bot, token):
-    tid, username = await resolve_target(bot, token)
-    if tid in OWNER_TELEGRAM_IDS:
-        raise ValueError("I won't remove a configured owner.")
-    row = db.query(AllowedUser).filter(AllowedUser.telegram_id == tid).first()
+    """Looks up user directly in the local DB instead of Telegram API"""
+    kind, value = _target(token)
+    
+    if kind == "id":
+        row = db.query(AllowedUser).filter(AllowedUser.telegram_id == value).first()
+    else:
+        row = db.query(AllowedUser).filter(AllowedUser.username == value).first()
+
     if not row:
-        return tid, username, False
-    if row.is_owner:
+        return value, value, False
+
+    if row.telegram_id in OWNER_TELEGRAM_IDS or row.is_owner:
         raise ValueError("I won't remove an owner.")
+
     db.delete(row)
     db.commit()
-    return tid, row.username or username, True
+    return row.telegram_id, row.username, True
+
 
 def allowed_list(db):
     return db.query(AllowedUser).order_by(

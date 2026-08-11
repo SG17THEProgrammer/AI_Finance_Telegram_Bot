@@ -195,9 +195,6 @@ not actually sure what the user means or what the facts are.
 === GOOGLE SHEETS ===
 - If the user asks to connect Google Sheets, call connect_google_sheets and share the returned link naturally. DO NOT make any changes in the link it should be as is - Telegram will make it tappable automatically, don't add extra formatting.
 
-- The link should look like :   
-- https://accounts.google.com/o/oauth2/v2/auth?client_id={client_id}&redirect_uri={redirect_uri}&response_type={response_type}&scope={scope_of_the_sheet}&access_type={access_type}&prompt=consent&state=1241264050
-
 - If the user pastes what looks like a Google Sheets link (or says "analyze this sheet" with a
   link), call read_google_sheet. If they're not connected yet (check profile info), tell them to
   connect first rather than attempting the read.
