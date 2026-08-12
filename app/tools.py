@@ -211,6 +211,31 @@ TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "generate_stock_chart",
+            "description": (
+                "Generates a visual 3-month price history chart for a stock. "
+                "Call this ONLY when the user explicitly asks for a chart, graph, or visual."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Stock ticker symbol (e.g. 'AAPL', 'TCS')."
+                    },
+                    "chart_type": {
+                        "type": "string",
+                        "description": "The type of chart to draw. Must be one of: 'line', 'candle', 'bar'. Default to 'line' unless the user asks for candlesticks or high detail.",
+                        "enum": ["line", "candle", "bar"]
+                    }
+                },
+                "required": ["query"],
+            },
+        },
+    },
 ]
 
 
@@ -261,6 +286,14 @@ def execute_tool_call(db, telegram_id: str, tool_name: str, arguments: dict) -> 
     if tool_name == "get_stock_quote":
         from app.financial_data import get_stock_quote
         return json.dumps(get_stock_quote(arguments.get("query", "")))
+
+    if tool_name == "generate_stock_chart":
+        from app.financial_data import generate_stock_chart
+        return json.dumps(generate_stock_chart(
+            arguments.get("query", ""), 
+            telegram_id,
+            arguments.get("chart_type", "line") # Defaults to line if LLM forgets
+        ))
 
     if tool_name == "get_company_news":
         from app.financial_data import get_company_news

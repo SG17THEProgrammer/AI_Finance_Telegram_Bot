@@ -320,7 +320,21 @@ async def _handle_text_inner(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 db.close()
                 stop_typing.set()
                 await typing_task
+
+                # Send the LLM's text response
                 await _send(update, reply_text)
+
+                # NEW: Check if the AI generated a chart during its thought process
+                import os
+                chart_path = f"chart_{telegram_id}.png"
+                if os.path.exists(chart_path):
+                    try:
+                        with open(chart_path, "rb") as f:
+                            await update.message.reply_photo(photo=f)
+                        # Delete it instantly to save disk space!
+                        os.remove(chart_path)
+                    except Exception as e:
+                        print(f"[Chart Error] {e}")
                 return
 
             if _is_negative(user_text):
@@ -360,7 +374,20 @@ async def _handle_text_inner(update: Update, context: ContextTypes.DEFAULT_TYPE)
         stop_typing.set()
         await typing_task
 
+    # Send the LLM's text response
     await _send(update, reply_text)
+
+    # NEW: Check if the AI generated a chart during its thought process
+    import os
+    chart_path = f"chart_{telegram_id}.png"
+    if os.path.exists(chart_path):
+        try:
+            with open(chart_path, "rb") as f:
+                await update.message.reply_photo(photo=f)
+            # Delete it instantly to save disk space!
+            os.remove(chart_path)
+        except Exception as e:
+            print(f"[Chart Error] {e}")
 
 
 async def _handle_voice_inner(update: Update, context: ContextTypes.DEFAULT_TYPE):

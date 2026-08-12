@@ -13,6 +13,12 @@ through to the user rather than filling the gap with a guess.
 import logging
 import httpx
 import yfinance as yf
+import os
+import matplotlib
+matplotlib.use('Agg') # CRITICAL: Prevents server crash on Linux
+# import matplotlib.pyplot as plt
+import mplfinance as mpf
+import yfinance as yf
 
 from app.config import FINNHUB_API_KEY
 
@@ -359,3 +365,37 @@ def get_sec_filings(query: str, limit: int = 5) -> dict:
         return {"symbol": symbol, "filings": filings, "source": "SEC EDGAR"}
     except Exception:
         return {"error": f"Could not retrieve SEC filings for '{query}' right now."}
+
+
+def generate_stock_chart(query: str, telegram_id: str, chart_type: str = "line") -> dict:
+    """Fetches 3 months of history and generates a line, candle, or bar chart image."""
+    symbol = _normalize_symbol(query)
+    
+    # 1. Fetch data
+    ticker = yf.Ticker(symbol)
+    hist = ticker.history(period="3mo")
+    
+    if hist.empty:
+        # Fallback to Indian markets
+        ticker = yf.Ticker(f"{symbol}.NS")
+        hist = ticker.history(period="3mo")
+        if hist.empty:
+            return {"error": f"Could not fetch historical data for {query}."}
+        symbol = f"{symbol}.NS"
+        
+    # 2. Map the requested chart type to mplfinance syntax
+    valid_types = {"line": "line", "candle": "candle", "bar": "ohlc"}
+    plot_type = valid_types.get(chart_type.lower(), "line")
+    
+    # 3. Create a professional style (Green for up, Red for down)
+    mc = mpf.make_marketcolors(up='g', down='r', inherit=True)
+    s  = mpf.make_mpf_style(marketcolors=mc, gridstyle='--', gridaxis='both')
+    
+    # 4. Draw and save the chart
+    chart_path = f"chart_{telegram_id}.png"
+    mpf.plot(hist, type=plot_type, style=s,
+             title=f"{symbol} - 3 Month History",
+             ylabel='Price',
+             savefig=dict(fname=chart_path, dpi=100, bbox_inches='tight'))
+    
+    return {"success": f"A {chart_type} chart for {symbol} has been generated and attached."}
