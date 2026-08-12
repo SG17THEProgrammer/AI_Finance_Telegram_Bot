@@ -18,6 +18,7 @@ import matplotlib
 matplotlib.use('Agg') # CRITICAL: Prevents server crash on Linux
 import matplotlib.pyplot as plt
 import mplfinance as mpf
+import pandas as pd
 
 from app.config import FINNHUB_API_KEY
 
@@ -415,10 +416,6 @@ def generate_stock_chart(query: str, telegram_id: str, chart_type: str = "line",
 
 
 def generate_comparison_chart(queries: list, telegram_id: str, period: str = "6mo") -> dict:
-    import os
-    import matplotlib.pyplot as plt
-    import yfinance as yf
-    
     chart_path = f"chart_{telegram_id}.png"
     
     if os.path.exists(chart_path):
@@ -446,15 +443,29 @@ def generate_comparison_chart(queries: list, telegram_id: str, period: str = "6m
                 symbol = symbol_ns
                 
         if not hist.empty:
-            first_price = hist['Close'].iloc[0]
-            pct_change = ((hist['Close'] - first_price) / first_price) * 100
+            # --- THE DATA CLEANING FIX ---
+            # 1. Drop any rows where the Close price is missing (NaN)
+            clean_close = hist['Close'].dropna()
             
-            plt.plot(hist.index, pct_change, label=symbol, linewidth=2)
+            if clean_close.empty:
+                failed_tickers.append(q)
+                continue
+                
+            # 2. TIMEZONE FIX: Strip timezones so US and Indian dates align perfectly on the X-axis
+            if clean_close.index.tz is not None:
+                clean_close.index = clean_close.index.tz_localize(None)
+            
+            # 3. Normalize to percentage
+            first_price = clean_close.iloc[0]
+            pct_change = ((clean_close - first_price) / first_price) * 100
+            
+            plt.plot(clean_close.index, pct_change, label=symbol, linewidth=2)
             valid_tickers.append(symbol)
+            # --- END OF FIX ---
         else:
             failed_tickers.append(q)
             
-    # THE LOCKDOWN: Stop the Sneaky AI
+    # THE LOCKDOWN
     if failed_tickers:
         plt.close('all') 
         return {
@@ -476,4 +487,4 @@ def generate_comparison_chart(queries: list, telegram_id: str, period: str = "6m
     plt.savefig(chart_path, bbox_inches='tight')
     plt.close('all')
     
-    return {"success": f"Chart generated successfully for {', '.join(valid_tickers)}."}
+    return {"success": f"Chart generated successfully for {', '.join(valid_tickers)}. Tell user it is attached."}
