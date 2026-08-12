@@ -413,10 +413,11 @@ def generate_stock_chart(query: str, telegram_id: str, chart_type: str = "line",
     return {"success": f"A {chart_type} chart for {symbol} over a '{period}' period has been generated and attached. Tell the user it is attached below."}
 
 
-def generate_comparison_chart(queries: list, telegram_id: str, period: str = "6mo") -> dict:
+
+def generate_comparison_chart(queries: list, telegram_id: str, period: str = "6mo") -> dict:    
     chart_path = f"chart_{telegram_id}.png"
     
-    # 1. PURGE OLD STATE: Delete leftover images & clear RAM to prevent ghost charts!
+    # 1. PURGE OLD STATE
     if os.path.exists(chart_path):
         try:
             os.remove(chart_path)
@@ -450,11 +451,22 @@ def generate_comparison_chart(queries: list, telegram_id: str, period: str = "6m
         else:
             failed_tickers.append(q)
             
-    # If absolutely nothing worked
-    if not valid_tickers:
-        plt.close('all') # Prevent memory leaks
-        return {"error": f"CRITICAL: No data found for ANY ticker ({', '.join(failed_tickers)}) over '{period}'."}
+    # 2. FAIL FAST: If ANY ticker fails, ABORT the entire chart.
+    if failed_tickers:
+        plt.close('all') # Clear RAM
+        # We return a hard error. This forces the LLM's ReAct loop to either
+        # self-correct the ticker (e.g. changing "Apple" to "AAPL") and try again,
+        # or explicitly apologize to the user. NO partial charts!
+        return {
+            "error": (
+                f"Fetch failed for: {', '.join(failed_tickers)}. Chart generation aborted. "
+                "Ensure you are passing valid official stock tickers (e.g. 'AAPL' instead of 'Apple'). "
+                "Correct the tickers and call this tool again. If the ticker is already correct, "
+                "the data is unavailable and you must tell the user."
+            )
+        }
         
+    # 3. If all successful, save and return
     plt.title(f"Relative Performance Comparison ({period})")
     plt.xlabel("Date")
     plt.ylabel("Growth (Percentage Change %)")
@@ -464,14 +476,4 @@ def generate_comparison_chart(queries: list, telegram_id: str, period: str = "6m
     plt.savefig(chart_path, bbox_inches='tight')
     plt.close('all')
     
-    # 2. FORCE THE LLM TO PAY ATTENTION (No more hallucinations)
-    if failed_tickers:
-        return {
-            "PARTIAL_SUCCESS_WARNING": (
-                f"Chart drawn for {', '.join(valid_tickers)}. "
-                f"MISSING DATA FOR: {', '.join(failed_tickers)}. "
-                "You MUST explicitly apologize to the user and state exactly which stocks were omitted due to missing data."
-            )
-        }
-        
-    return {"success": f"Chart generated for {', '.join(valid_tickers)}. Tell user it is attached."}
+    return {"success": f"Chart generated successfully for {', '.join(valid_tickers)}. Tell user it is attached."}
