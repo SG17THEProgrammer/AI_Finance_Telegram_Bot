@@ -18,7 +18,6 @@ import matplotlib
 matplotlib.use('Agg') # CRITICAL: Prevents server crash on Linux
 import matplotlib.pyplot as plt
 import mplfinance as mpf
-import yfinance as yf
 
 from app.config import FINNHUB_API_KEY
 
@@ -367,56 +366,67 @@ def get_sec_filings(query: str, limit: int = 5) -> dict:
         return {"error": f"Could not retrieve SEC filings for '{query}' right now."}
 
 
-def generate_stock_chart(query: str, telegram_id: str, chart_type: str = "line" , period: str = "3mo") -> dict:
-    """Fetches n months of history and generates a line, candle, or bar chart image. By default it is 3 months"""
+def generate_stock_chart(query: str, telegram_id: str, chart_type: str = "line", period: str = "3mo") -> dict:
+    """Fetches historical data and generates a line, candle, or bar chart image."""
+    chart_path = f"chart_{telegram_id}.png"
+    
+    # 1. PURGE OLD STATE: Delete leftover images & clear RAM to prevent ghost charts!
+    if os.path.exists(chart_path):
+        try:
+            os.remove(chart_path)
+        except Exception:
+            pass
+    plt.close('all') 
+    
     symbol = _normalize_symbol(query)
     
+    # 2. Fetch data
     ticker = yf.Ticker(symbol)
-    # Use the dynamic period here!
-    hist = ticker.history(period=period) 
-    
-    if hist.empty:
-        ticker = yf.Ticker(f"{symbol}.NS")
-        hist = ticker.history(period=period) # And here!
-        if hist.empty:
-            return {"error": f"I could not fetch '{period}' of historical data for {query}. The API might be rate-limited or the data is unavailable."}
-        symbol = f"{symbol}.NS"
-    
-    # 1. Fetch data
-    ticker = yf.Ticker(symbol)
-    hist = ticker.history(period="3mo")
+    hist = ticker.history(period=period)
     
     if hist.empty:
         # Fallback to Indian markets
         ticker = yf.Ticker(f"{symbol}.NS")
-        hist = ticker.history(period="3mo")
+        hist = ticker.history(period=period)
         if hist.empty:
-            return {"error": f"Could not fetch historical data for {query}."}
+            plt.close('all') # Prevent memory leaks before returning
+            return {"error": f"CRITICAL: I could not fetch '{period}' of historical data for {query}. The API might be rate-limited or the data is unavailable."}
         symbol = f"{symbol}.NS"
         
-    # 2. Map the requested chart type to mplfinance syntax
+    # 3. Map the requested chart type to mplfinance syntax
     valid_types = {"line": "line", "candle": "candle", "bar": "ohlc"}
     plot_type = valid_types.get(chart_type.lower(), "line")
     
-    # 3. Create a professional style (Green for up, Red for down)
+    # 4. Create a professional style (Green for up, Red for down)
     mc = mpf.make_marketcolors(up='g', down='r', inherit=True)
     s  = mpf.make_mpf_style(marketcolors=mc, gridstyle='--', gridaxis='both')
     
-    # 4. Draw and save the chart
-    chart_path = f"chart_{telegram_id}.png"
+    # 5. Draw and save the chart
     mpf.plot(hist, type=plot_type, style=s,
-             title=f"{symbol} - 3 Month History",
+             title=f"{symbol} - {period} History",
              ylabel='Price',
              savefig=dict(fname=chart_path, dpi=100, bbox_inches='tight'))
+             
+    # 6. Final RAM Cleanup
+    plt.close('all') 
     
-    return {"success": f"A {chart_type} chart for {symbol} has been generated and attached."}
+    return {"success": f"A {chart_type} chart for {symbol} over a '{period}' period has been generated and attached. Tell the user it is attached below."}
 
 
 def generate_comparison_chart(queries: list, telegram_id: str, period: str = "6mo") -> dict:
-    """Generates a normalized percentage comparison chart for multiple stocks."""
+    chart_path = f"chart_{telegram_id}.png"
+    
+    # 1. PURGE OLD STATE: Delete leftover images & clear RAM to prevent ghost charts!
+    if os.path.exists(chart_path):
+        try:
+            os.remove(chart_path)
+        except Exception:
+            pass
+    plt.close('all') 
+    
     plt.figure(figsize=(10, 5))
     valid_tickers = []
-    failed_tickers = [] # NEW: Track what failed
+    failed_tickers = []
     
     for q in queries:
         symbol = _normalize_symbol(q)
@@ -432,19 +442,18 @@ def generate_comparison_chart(queries: list, telegram_id: str, period: str = "6m
                 symbol = symbol_ns
                 
         if not hist.empty:
-            # Normalize the price to Percentage Change!
             first_price = hist['Close'].iloc[0]
             pct_change = ((hist['Close'] - first_price) / first_price) * 100
             
             plt.plot(hist.index, pct_change, label=symbol, linewidth=2)
             valid_tickers.append(symbol)
         else:
-            # NEW: Log the failure
             failed_tickers.append(q)
             
     # If absolutely nothing worked
     if not valid_tickers:
-        return {"error": f"Could not fetch '{period}' of historical data for ANY of the requested tickers: {', '.join(failed_tickers)}."}
+        plt.close('all') # Prevent memory leaks
+        return {"error": f"CRITICAL: No data found for ANY ticker ({', '.join(failed_tickers)}) over '{period}'."}
         
     plt.title(f"Relative Performance Comparison ({period})")
     plt.xlabel("Date")
@@ -452,15 +461,17 @@ def generate_comparison_chart(queries: list, telegram_id: str, period: str = "6m
     plt.legend()
     plt.grid(True, linestyle='--', alpha=0.7)
     
-    chart_path = f"chart_{telegram_id}.png"
     plt.savefig(chart_path, bbox_inches='tight')
-    plt.close()
+    plt.close('all')
     
-    # NEW: Build a strict, transparent response for the AI
-    response_msg = f"Comparison chart generated for {', '.join(valid_tickers)}. "
+    # 2. FORCE THE LLM TO PAY ATTENTION (No more hallucinations)
     if failed_tickers:
-        response_msg += f"CRITICAL WARNING: The API did not return data for {', '.join(failed_tickers)} over the '{period}' period. You MUST explicitly tell the user that these specific stocks were omitted from the chart due to missing data."
-    else:
-        response_msg += "Tell the user the chart is attached."
+        return {
+            "PARTIAL_SUCCESS_WARNING": (
+                f"Chart drawn for {', '.join(valid_tickers)}. "
+                f"MISSING DATA FOR: {', '.join(failed_tickers)}. "
+                "You MUST explicitly apologize to the user and state exactly which stocks were omitted due to missing data."
+            )
+        }
         
-    return {"success": response_msg}
+    return {"success": f"Chart generated for {', '.join(valid_tickers)}. Tell user it is attached."}
