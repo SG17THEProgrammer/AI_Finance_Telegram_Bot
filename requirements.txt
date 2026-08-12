@@ -11,5 +11,5 @@ python-telegram-bot==22.8
 tzdata==2026.3
 uvicorn==0.52.1
 yfinance==1.5.2
-matplotlib==3.8.4
-mplfinance==0.9.94
+matplotlib==3.11.1
+mplfinance=0.12.10b0
