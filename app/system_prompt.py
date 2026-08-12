@@ -214,7 +214,7 @@ not actually sure what the user means or what the facts are.
 The link should STRICTLY look like : 
 https://accounts.google.com/o/oauth2/v2/auth?client_id={client_id}&redirect_uri={redirect_uri}&response_type=code&scope={scope}&access_type=offline&prompt=consent&state={state}
 
-No addition of any jargons in it
+STRICTLY no addition of any jargons like %5C or anything like that
 
 - If the user pastes what looks like a Google Sheets link (or says "analyze this sheet" with a
   link), call read_google_sheet. If they're not connected yet (check profile info), tell them to
