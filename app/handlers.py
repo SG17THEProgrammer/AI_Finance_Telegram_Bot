@@ -127,8 +127,8 @@ async def _require_owner(update: Update) -> bool:
 
     if not is_owner(update):
         await update.effective_message.reply_text(
-            "Sorry — this bot is currently invite-only.\n\n"
-            "Only the owner can manage access."
+            "⛔️ Access Denied \n\n"
+            "Only the owner/admin can manage access."
         )
         return False
 
@@ -148,8 +148,8 @@ async def _deny_if_not_allowed(update: Update) -> bool:
     finally:
         db.close()
     await update.effective_message.reply_text(
-        "Sorry — this bot is currently invite-only.\n\n"
-        "Ask the owner to add your Telegram username before using Atlas."
+        "🔒 Access Denied: This is a invite-only financial bot.\n\n"
+        "You must be explicitly invited by the admin to use it."
     )
     return True
 
