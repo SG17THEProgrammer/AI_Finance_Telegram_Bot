@@ -16,7 +16,7 @@ import yfinance as yf
 import os
 import matplotlib
 matplotlib.use('Agg') # CRITICAL: Prevents server crash on Linux
-# import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt
 import mplfinance as mpf
 import yfinance as yf
 
@@ -367,9 +367,20 @@ def get_sec_filings(query: str, limit: int = 5) -> dict:
         return {"error": f"Could not retrieve SEC filings for '{query}' right now."}
 
 
-def generate_stock_chart(query: str, telegram_id: str, chart_type: str = "line") -> dict:
-    """Fetches 3 months of history and generates a line, candle, or bar chart image."""
+def generate_stock_chart(query: str, telegram_id: str, chart_type: str = "line" , period: str = "3mo") -> dict:
+    """Fetches n months of history and generates a line, candle, or bar chart image. By default it is 3 months"""
     symbol = _normalize_symbol(query)
+    
+    ticker = yf.Ticker(symbol)
+    # Use the dynamic period here!
+    hist = ticker.history(period=period) 
+    
+    if hist.empty:
+        ticker = yf.Ticker(f"{symbol}.NS")
+        hist = ticker.history(period=period) # And here!
+        if hist.empty:
+            return {"error": f"Could not fetch historical data for {query}."}
+        symbol = f"{symbol}.NS"
     
     # 1. Fetch data
     ticker = yf.Ticker(symbol)
@@ -399,3 +410,44 @@ def generate_stock_chart(query: str, telegram_id: str, chart_type: str = "line")
              savefig=dict(fname=chart_path, dpi=100, bbox_inches='tight'))
     
     return {"success": f"A {chart_type} chart for {symbol} has been generated and attached."}
+
+
+def generate_comparison_chart(queries: list, telegram_id: str, period: str = "6mo") -> dict:
+    """Generates a normalized percentage comparison chart for multiple stocks."""
+    plt.figure(figsize=(10, 5))
+    valid_tickers = []
+    
+    for q in queries:
+        symbol = _normalize_symbol(q)
+        ticker = yf.Ticker(symbol)
+        hist = ticker.history(period=period)
+        
+        # Fallback for Indian markets
+        if hist.empty:
+            symbol = f"{symbol}.NS"
+            ticker = yf.Ticker(symbol)
+            hist = ticker.history(period=period)
+            
+        if not hist.empty:
+            # CRITICAL: Normalize the price to Percentage Change!
+            first_price = hist['Close'].iloc[0]
+            pct_change = ((hist['Close'] - first_price) / first_price) * 100
+            
+            plt.plot(hist.index, pct_change, label=symbol, linewidth=2)
+            valid_tickers.append(symbol)
+            
+    if not valid_tickers:
+        return {"error": "Could not fetch data for any of the requested tickers."}
+        
+    plt.title(f"Relative Performance Comparison ({period})")
+    plt.xlabel("Date")
+    plt.ylabel("Growth (Percentage Change %)")
+    plt.legend()
+    plt.grid(True, linestyle='--', alpha=0.7)
+    
+    # Save using the exact same naming convention so handlers.py catches it!
+    chart_path = f"chart_{telegram_id}.png"
+    plt.savefig(chart_path, bbox_inches='tight')
+    plt.close()
+    
+    return {"success": f"Comparison chart generated for {', '.join(valid_tickers)}. Tell the user it's attached."}

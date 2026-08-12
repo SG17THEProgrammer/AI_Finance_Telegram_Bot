@@ -215,10 +215,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "generate_stock_chart",
-            "description": (
-                "Generates a visual 3-month price history chart for a stock. "
-                "Call this ONLY when the user explicitly asks for a chart, graph, or visual."
-            ),
+            "description": "Generates a visual price history chart for a single stock.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -228,11 +225,39 @@ TOOLS = [
                     },
                     "chart_type": {
                         "type": "string",
-                        "description": "The type of chart to draw. Must be one of: 'line', 'candle', 'bar'. Default to 'line' unless the user asks for candlesticks or high detail.",
+                        "description": "Chart type. Must be one of: 'line', 'candle', 'bar'.",
                         "enum": ["line", "candle", "bar"]
+                    },
+                    "period": {
+                        "type": "string",
+                        "description": "The timeframe for the chart. Map the user's request to the closest valid option. Default is '3mo'.",
+                        "enum": ["1mo", "3mo", "6mo", "1y", "2y", "5y", "max"]
                     }
                 },
                 "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "generate_comparison_chart",
+            "description": "Generates a single line chart comparing the percentage growth of MULTIPLE stocks. Call this when the user asks to compare two or more companies visually.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "queries": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of stock tickers to compare (e.g. ['AAPL', 'MSFT', 'NVDA'])."
+                    },
+                    "period": {
+                        "type": "string",
+                        "description": "Timeframe for comparison. Default to '6mo'.",
+                        "enum": ["1mo", "3mo", "6mo", "1y", "2y", "5y", "max"]
+                    }
+                },
+                "required": ["queries"],
             },
         },
     },
@@ -292,7 +317,16 @@ def execute_tool_call(db, telegram_id: str, tool_name: str, arguments: dict) -> 
         return json.dumps(generate_stock_chart(
             arguments.get("query", ""), 
             telegram_id,
-            arguments.get("chart_type", "line") # Defaults to line if LLM forgets
+            arguments.get("chart_type", "line"),
+            arguments.get("period", "3mo")
+        ))
+
+    if tool_name == "generate_comparison_chart":
+        from app.financial_data import generate_comparison_chart
+        return json.dumps(generate_comparison_chart(
+            arguments.get("queries", []), 
+            telegram_id,
+            arguments.get("period", "6mo")
         ))
 
     if tool_name == "get_company_news":
