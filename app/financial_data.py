@@ -414,10 +414,13 @@ def generate_stock_chart(query: str, telegram_id: str, chart_type: str = "line",
 
 
 
-def generate_comparison_chart(queries: list, telegram_id: str, period: str = "6mo") -> dict:    
+def generate_comparison_chart(queries: list, telegram_id: str, period: str = "6mo") -> dict:
+    import os
+    import matplotlib.pyplot as plt
+    import yfinance as yf
+    
     chart_path = f"chart_{telegram_id}.png"
     
-    # 1. PURGE OLD STATE
     if os.path.exists(chart_path):
         try:
             os.remove(chart_path)
@@ -451,22 +454,19 @@ def generate_comparison_chart(queries: list, telegram_id: str, period: str = "6m
         else:
             failed_tickers.append(q)
             
-    # 2. FAIL FAST: If ANY ticker fails, ABORT the entire chart.
+    # THE LOCKDOWN: Stop the Sneaky AI
     if failed_tickers:
-        plt.close('all') # Clear RAM
-        # We return a hard error. This forces the LLM's ReAct loop to either
-        # self-correct the ticker (e.g. changing "Apple" to "AAPL") and try again,
-        # or explicitly apologize to the user. NO partial charts!
+        plt.close('all') 
         return {
             "error": (
-                f"Fetch failed for: {', '.join(failed_tickers)}. Chart generation aborted. "
-                "Ensure you are passing valid official stock tickers (e.g. 'AAPL' instead of 'Apple'). "
-                "Correct the tickers and call this tool again. If the ticker is already correct, "
-                "the data is unavailable and you must tell the user."
+                f"CRITICAL FAILURE: Could not fetch data for {', '.join(failed_tickers)} over the '{period}' period. "
+                "SYSTEM OVERRIDE: You are FORBIDDEN from calling this tool again by silently dropping the failed tickers. "
+                "Do NOT generate a partial chart. "
+                "You MUST immediately stop using tools and tell the user in plain text: 'I apologize, but the financial API is currently unable to fetch the requested data for [insert failed tickers], so I cannot draw the complete comparison chart.' "
+                "Do not make up any other excuses."
             )
         }
         
-    # 3. If all successful, save and return
     plt.title(f"Relative Performance Comparison ({period})")
     plt.xlabel("Date")
     plt.ylabel("Growth (Percentage Change %)")
@@ -476,4 +476,4 @@ def generate_comparison_chart(queries: list, telegram_id: str, period: str = "6m
     plt.savefig(chart_path, bbox_inches='tight')
     plt.close('all')
     
-    return {"success": f"Chart generated successfully for {', '.join(valid_tickers)}. Tell user it is attached."}
+    return {"success": f"Chart generated successfully for {', '.join(valid_tickers)}."}
