@@ -379,7 +379,7 @@ def generate_stock_chart(query: str, telegram_id: str, chart_type: str = "line" 
         ticker = yf.Ticker(f"{symbol}.NS")
         hist = ticker.history(period=period) # And here!
         if hist.empty:
-            return {"error": f"Could not fetch historical data for {query}."}
+            return {"error": f"I could not fetch '{period}' of historical data for {query}. The API might be rate-limited or the data is unavailable."}
         symbol = f"{symbol}.NS"
     
     # 1. Fetch data
@@ -416,6 +416,7 @@ def generate_comparison_chart(queries: list, telegram_id: str, period: str = "6m
     """Generates a normalized percentage comparison chart for multiple stocks."""
     plt.figure(figsize=(10, 5))
     valid_tickers = []
+    failed_tickers = [] # NEW: Track what failed
     
     for q in queries:
         symbol = _normalize_symbol(q)
@@ -424,20 +425,26 @@ def generate_comparison_chart(queries: list, telegram_id: str, period: str = "6m
         
         # Fallback for Indian markets
         if hist.empty:
-            symbol = f"{symbol}.NS"
-            ticker = yf.Ticker(symbol)
+            symbol_ns = f"{symbol}.NS"
+            ticker = yf.Ticker(symbol_ns)
             hist = ticker.history(period=period)
-            
+            if not hist.empty:
+                symbol = symbol_ns
+                
         if not hist.empty:
-            # CRITICAL: Normalize the price to Percentage Change!
+            # Normalize the price to Percentage Change!
             first_price = hist['Close'].iloc[0]
             pct_change = ((hist['Close'] - first_price) / first_price) * 100
             
             plt.plot(hist.index, pct_change, label=symbol, linewidth=2)
             valid_tickers.append(symbol)
+        else:
+            # NEW: Log the failure
+            failed_tickers.append(q)
             
+    # If absolutely nothing worked
     if not valid_tickers:
-        return {"error": "Could not fetch data for any of the requested tickers."}
+        return {"error": f"Could not fetch '{period}' of historical data for ANY of the requested tickers: {', '.join(failed_tickers)}."}
         
     plt.title(f"Relative Performance Comparison ({period})")
     plt.xlabel("Date")
@@ -445,9 +452,15 @@ def generate_comparison_chart(queries: list, telegram_id: str, period: str = "6m
     plt.legend()
     plt.grid(True, linestyle='--', alpha=0.7)
     
-    # Save using the exact same naming convention so handlers.py catches it!
     chart_path = f"chart_{telegram_id}.png"
     plt.savefig(chart_path, bbox_inches='tight')
     plt.close()
     
-    return {"success": f"Comparison chart generated for {', '.join(valid_tickers)}. Tell the user it's attached."}
+    # NEW: Build a strict, transparent response for the AI
+    response_msg = f"Comparison chart generated for {', '.join(valid_tickers)}. "
+    if failed_tickers:
+        response_msg += f"CRITICAL WARNING: The API did not return data for {', '.join(failed_tickers)} over the '{period}' period. You MUST explicitly tell the user that these specific stocks were omitted from the chart due to missing data."
+    else:
+        response_msg += "Tell the user the chart is attached."
+        
+    return {"success": response_msg}
