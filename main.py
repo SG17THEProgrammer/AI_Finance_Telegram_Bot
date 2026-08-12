@@ -10,6 +10,8 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
+
+# special Python class from the python-telegram-bot library. This class takes that giant, messy JSON payload and converts it into a clean, easy-to-use Python object.
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters
 
@@ -19,11 +21,15 @@ from app.handlers import start_command, handle_text, handle_voice, handle_photo,
 from app.google_oauth import exchange_code_for_tokens
 from app.scheduler import start_scheduler
 
+# This takes your secret Telegram Token and creates the bot object.
 telegram_app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+
 telegram_app.add_handler(CommandHandler("start", start_command))
 telegram_app.add_handler(CommandHandler("allow", allow_command))
 telegram_app.add_handler(CommandHandler("remove", remove_command))
 telegram_app.add_handler(CommandHandler("allowed", allowed_command))
+
+
 telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 telegram_app.add_handler(MessageHandler(filters.VOICE, handle_voice))
 telegram_app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
@@ -32,25 +38,34 @@ telegram_app.add_handler(MessageHandler(filters.Document.PDF, handle_document))
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    init_db()
+    init_db() # initializes the SQLite/Postgres database tables
     await telegram_app.initialize()
     await telegram_app.start()
+
+    # Telling Telegram exactly where to send new messages
     if PUBLIC_WEBHOOK_URL:
         await telegram_app.bot.set_webhook(url=f"{PUBLIC_WEBHOOK_URL}/webhook")
+
+    # turns on the background timer for daily briefings
     scheduler = start_scheduler(telegram_app.bot)
-    yield
+
+    yield # for Startup
+
     scheduler.shutdown()
     await telegram_app.stop()
     await telegram_app.shutdown()
 
 
-app = FastAPI(lifespan=lifespan)
+#This creates the API that runs on the internet
+app = FastAPI(lifespan=lifespan) 
 
 
 @app.post("/webhook")
 async def telegram_webhook(request: Request):
+    # It grabs the raw data from Telegram and translates it into a Python Update object.
     data = await request.json()
     update = Update.de_json(data, telegram_app.bot)
+    # It throws that update into the bot, which then triggers the correct handler.
     await telegram_app.process_update(update)
     return {"ok": True}
 
@@ -62,6 +77,7 @@ async def health():
 
 @app.get("/oauth2callback")
 async def oauth2callback(request: Request):
+    # google sends code and state
     code = request.query_params.get("code")
     telegram_id = request.query_params.get("state")
     error = request.query_params.get("error")
@@ -73,6 +89,7 @@ async def oauth2callback(request: Request):
         )
 
     try:
+        # We trade Google's temporary code for a permanent refresh_token
         tokens = exchange_code_for_tokens(code)
         refresh_token = tokens.get("refresh_token")
         if not refresh_token:
@@ -86,6 +103,7 @@ async def oauth2callback(request: Request):
                 status_code=400,
             )
 
+        # We open the database, find the user by their Telegram ID, save their refresh_token, and commit the change. Now the bot can read their sheets!
         db = SessionLocal()
         try:
             user = get_or_create_user(db, telegram_id)

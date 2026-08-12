@@ -6,6 +6,7 @@ from telegram.constants import ParseMode, ChatAction
 from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 from telegram.ext import CommandHandler
+import os
 
 from app.db import SessionLocal, get_or_create_user, save_message, get_recent_history
 from app.access_control import is_owner, is_allowed, record_allowed_user, allow_target, remove_target, allowed_list
@@ -63,6 +64,7 @@ def build_profile_summary(user) -> str:
     return " ".join(parts)
 
 
+# If you send a URL with underscores in it, Telegram will think you are trying to make the text italic, fail to parse it, and silently crash your bot.
 def _to_telegram_markdown(text: str) -> str:
     """The LLM writes standard **bold** markdown with '* ' style bullets.
     Telegram's legacy Markdown mode uses single *bold*, and a '* ' bullet
@@ -77,8 +79,26 @@ def _to_telegram_markdown(text: str) -> str:
     STRIPPED when rendered, corrupting URLs and any other underscored text.
     Escaping every underscore as '\\_' makes Telegram render it as a literal
     underscore instead of treating it as formatting."""
+
+
+    # (?m) — multiline mode. Makes ^ match the beginning of each line, not just the beginning of the whole string.
+    # ^ — beginning of a line.
+    # [\*\-] — matches ** either * or -.
+    # [...] is a character class.
+    # \* escapes *, because * normally has special regex meaning.
+    # \- escapes -, since - has special meaning inside a character class.
+    # \s+ — one or more whitespace characters (spaces, tabs, etc.).
     text = re.sub(r"(?m)^[\*\-]\s+", "• ", text)
+
+    #  \*\* — matches literal **.
+    # (.+?) — captures the content between the two ** markers.
+    # . — any character except newline by default.
+    # + — one or more characters.
+    # ? — makes + non-greedy, so it captures as little as possible.
+    # (...) — creates capture group 1.
+    # \*\* — matches the closing literal **
     text = re.sub(r"\*\*(.+?)\*\*", r"*\1*", text)
+
     text = text.replace("_", r"\_")
     return text
 
@@ -296,6 +316,10 @@ async def _handle_text_inner(update: Update, context: ContextTypes.DEFAULT_TYPE)
         _keep_typing(context, chat_id, stop_typing))
 
     db = SessionLocal()
+    
+    # We define query_text here. By default, it's what the user just typed.
+    query_text = user_text 
+    
     try:
         user = get_or_create_user(db, telegram_id, first_name)
 
@@ -309,35 +333,10 @@ async def _handle_text_inner(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 # Confirmed - now actually run the transcript through the LLM.
                 user.pending_transcript = None
                 db.commit()
-
-                history = get_recent_history(db, telegram_id, limit=12)
-                save_message(db, telegram_id, "user", pending)
-                profile_summary = build_profile_summary(user)
-                reply_text = await asyncio.to_thread(
-                    get_reply, db, telegram_id, history, pending, profile_summary
-                )
-                save_message(db, telegram_id, "assistant", reply_text)
-                db.close()
-                stop_typing.set()
-                await typing_task
-
-                # Send the LLM's text response
-                await _send(update, reply_text)
-
-                # NEW: Check if the AI generated a chart during its thought process
-                import os
-                chart_path = f"chart_{telegram_id}.png"
-                if os.path.exists(chart_path):
-                    try:
-                        with open(chart_path, "rb") as f:
-                            await update.message.reply_photo(photo=f)
-                        # Delete it instantly to save disk space!
-                        os.remove(chart_path)
-                    except Exception as e:
-                        print(f"[Chart Error] {e}")
-                return
-
-            if _is_negative(user_text):
+                # Override the query text with the confirmed voice transcript
+                query_text = pending 
+                
+            elif _is_negative(user_text):
                 # Rejected - clear it and let them retry however they like.
                 user.pending_transcript = None
                 db.commit()
@@ -348,28 +347,32 @@ async def _handle_text_inner(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 await typing_task
                 await _send(update, retry_prompt)
                 return
-
-            # Anything else: treat what they just typed as the corrected query
-            # itself - this covers "edit manually" without a separate step.
-            user.pending_transcript = None
-            db.commit()
-            # fall through to normal handling below, using this message as the query
+            else:
+                # Anything else: treat what they just typed as the corrected query
+                # itself - this covers "edit manually" without a separate step.
+                user.pending_transcript = None
+                db.commit()
+                # fall through to normal handling below, using this message as the query
 
         # Fetch history BEFORE saving the current message, so it isn't duplicated.
         history = get_recent_history(db, telegram_id, limit=12)
-        save_message(db, telegram_id, "user", user_text)
+        save_message(db, telegram_id, "user", query_text)
 
         profile_summary = build_profile_summary(user)
 
         # get_reply is a blocking (sync) call under the hood (Gemini client +
-        # tool round trips) - run it in a worker thread so the typing
-        # indicator loop above keeps running concurrently instead of freezing.
+        # tool round trips).
+        # Google Gemini and Groq Python SDKs are primarily synchronous (blocking), running them normally would freeze the entire FastAPI server
+        # this offloads the heavy API request to a separate worker thread. This keeps the main event loop totally non-blocking and scalable."
+        # run it in a worker thread so the typing indicator loop above keeps running concurrently instead of freezing.
         reply_text = await asyncio.to_thread(
-            get_reply, db, telegram_id, history, user_text, profile_summary
+            get_reply, db, telegram_id, history, query_text, profile_summary
         )
 
         save_message(db, telegram_id, "assistant", reply_text)
     finally:
+        # Putting this in 'finally' ensures the DB closes and typing stops 
+        # even if the LLM crashes or throws an exception.
         db.close()
         stop_typing.set()
         await typing_task
