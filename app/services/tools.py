@@ -309,11 +309,11 @@ def execute_tool_call(db, telegram_id: str, tool_name: str, arguments: dict) -> 
         return "reset: history and profile wiped"
 
     if tool_name == "get_stock_quote":
-        from app.financial_data import get_stock_quote
+        from app.services.financial_data import get_stock_quote
         return json.dumps(get_stock_quote(arguments.get("query", "")))
 
     if tool_name == "generate_stock_chart":
-        from app.financial_data import generate_stock_chart
+        from app.services.financial_data import generate_stock_chart
         return json.dumps(generate_stock_chart(
             arguments.get("query", ""), 
             telegram_id,
@@ -322,7 +322,7 @@ def execute_tool_call(db, telegram_id: str, tool_name: str, arguments: dict) -> 
         ))
 
     if tool_name == "generate_comparison_chart":
-        from app.financial_data import generate_comparison_chart
+        from app.services.financial_data import generate_comparison_chart
         return json.dumps(generate_comparison_chart(
             arguments.get("queries", []), 
             telegram_id,
@@ -330,15 +330,15 @@ def execute_tool_call(db, telegram_id: str, tool_name: str, arguments: dict) -> 
         ))
 
     if tool_name == "get_company_news":
-        from app.financial_data import get_company_news
+        from app.services.financial_data import get_company_news
         return json.dumps(get_company_news(arguments.get("query", "")))
 
     if tool_name == "get_sec_filings":
-        from app.financial_data import get_sec_filings
+        from app.services.financial_data import get_sec_filings
         return json.dumps(get_sec_filings(arguments.get("query", "")))
 
     if tool_name == "get_company_fundamentals":
-        from app.financial_data import get_company_fundamentals
+        from app.services.financial_data import get_company_fundamentals
         return json.dumps(get_company_fundamentals(arguments.get("query", "")))
 
     if tool_name == "calculate":
