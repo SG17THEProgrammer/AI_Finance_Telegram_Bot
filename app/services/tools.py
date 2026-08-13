@@ -342,7 +342,7 @@ def execute_tool_call(db, telegram_id: str, tool_name: str, arguments: dict) -> 
         return json.dumps(get_company_fundamentals(arguments.get("query", "")))
 
     if tool_name == "calculate":
-        from app.calculator import safe_calculate
+        from app.services.calculator import safe_calculate
         return json.dumps(safe_calculate(arguments.get("expression", "")))
 
     if tool_name == "connect_google_sheets":
@@ -351,7 +351,7 @@ def execute_tool_call(db, telegram_id: str, tool_name: str, arguments: dict) -> 
         return json.dumps({"auth_link": link})
 
     if tool_name == "read_google_sheet":
-        from app.google_sheets import get_sheet_data
+        from app.integrations.google_sheets import get_sheet_data
         user = db.query(User).filter(User.telegram_id == telegram_id).first()
         if not user or not user.google_refresh_token:
             return json.dumps({"error": "Not connected yet - the user needs to connect their Google account first."})

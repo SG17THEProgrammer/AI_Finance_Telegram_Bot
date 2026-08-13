@@ -11,7 +11,8 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 
 from app.config import TELEGRAM_BOT_TOKEN
 from app.database.db import init_db
-from app.bot.handlers import start_command, handle_text, handle_voice, handle_photo, handle_document, allow_command, remove_command, allowed_command, id_command
+from app.bot.handlers import handle_text, handle_voice, handle_photo, handle_document, allow_command, remove_command, allowed_command, id_command
+from app.bot.onboarding import onboarding_handler, profile_command
 from app.scheduler.scheduler import start_scheduler
 
 
@@ -24,7 +25,8 @@ def main():
 
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).post_init(_post_init).build()
 
-    app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(onboarding_handler)
+    app.add_handler(CommandHandler("profile", profile_command))
     app.add_handler(CommandHandler("allow", allow_command))
     app.add_handler(CommandHandler("remove", remove_command))
     app.add_handler(CommandHandler("allowed", allowed_command))

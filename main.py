@@ -8,7 +8,7 @@ Usage (after deployment, with PUBLIC_WEBHOOK_URL set in .env):
 """
 from contextlib import asynccontextmanager
 
-from app.bot.onboarding import onboarding_handler
+from app.bot.onboarding import onboarding_handler, profile_command
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 
@@ -18,7 +18,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 
 from app.config import TELEGRAM_BOT_TOKEN, PUBLIC_WEBHOOK_URL
 from app.database.db import init_db, SessionLocal, get_or_create_user
-from app.bot.handlers import start_command, handle_text, handle_voice, handle_photo, handle_document, allow_command, remove_command, allowed_command, id_command
+from app.bot.handlers import handle_text, handle_voice, handle_photo, handle_document, allow_command, remove_command, allowed_command, id_command
 from app.integrations.google_oauth import exchange_code_for_tokens
 from app.scheduler.scheduler import start_scheduler
 
@@ -26,6 +26,7 @@ from app.scheduler.scheduler import start_scheduler
 telegram_app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
 
 telegram_app.add_handler(onboarding_handler)
+telegram_app.add_handler(CommandHandler("profile", profile_command))
 telegram_app.add_handler(CommandHandler("allow", allow_command))
 telegram_app.add_handler(CommandHandler("remove", remove_command))
 telegram_app.add_handler(CommandHandler("allowed", allowed_command))
