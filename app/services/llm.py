@@ -5,7 +5,7 @@ from groq import Groq, RateLimitError, APIError
 
 from app.config import GEMINI_API_KEY, GEMINI_MODEL, GROQ_API_KEY, GROQ_MODEL
 from app.system_prompt import SYSTEM_PROMPT
-from app.tools import TOOLS, execute_tool_call
+from app.services.tools import TOOLS, execute_tool_call
 
 gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None

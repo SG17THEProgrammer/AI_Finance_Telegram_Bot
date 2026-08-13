@@ -10,10 +10,10 @@ from zoneinfo import ZoneInfo
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import or_
 
-from app.db import SessionLocal, User, AllowedUser
+from app.database.db import SessionLocal, User, AllowedUser
 from app.config import OWNER_TELEGRAM_IDS
-from app.llm import get_reply
-from app.handlers import build_profile_summary, _to_telegram_markdown
+from app.services.llm import get_reply
+from app.bot.handlers import build_profile_summary, _to_telegram_markdown
 
 IST = ZoneInfo("Asia/Kolkata")
 

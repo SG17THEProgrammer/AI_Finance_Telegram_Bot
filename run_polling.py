@@ -10,7 +10,7 @@ Usage:
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters
 
 from app.config import TELEGRAM_BOT_TOKEN
-from app.db import init_db
+from app.database.db import init_db
 from app.handlers import start_command, handle_text, handle_voice, handle_photo, handle_document, allow_command, remove_command, allowed_command, id_command
 from app.scheduler import start_scheduler
 

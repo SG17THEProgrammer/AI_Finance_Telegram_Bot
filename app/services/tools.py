@@ -266,7 +266,7 @@ TOOLS = [
 
 def execute_tool_call(db, telegram_id: str, tool_name: str, arguments: dict) -> str:
     """Executes a tool call and returns a short string result to feed back to the LLM."""
-    from app.db import User, Message
+    from app.database.db import User, Message
 
     if tool_name == "save_user_profile":
         user = db.query(User).filter(User.telegram_id == telegram_id).first()
@@ -346,7 +346,7 @@ def execute_tool_call(db, telegram_id: str, tool_name: str, arguments: dict) -> 
         return json.dumps(safe_calculate(arguments.get("expression", "")))
 
     if tool_name == "connect_google_sheets":
-        from app.google_oauth import build_auth_url
+        from app.integrations.google_oauth import build_auth_url
         link = build_auth_url(telegram_id)
         return json.dumps({"auth_link": link})
 

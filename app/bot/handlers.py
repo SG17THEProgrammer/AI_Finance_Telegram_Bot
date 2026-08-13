@@ -8,10 +8,10 @@ from telegram.ext import ContextTypes
 from telegram.ext import CommandHandler
 import os
 
-from app.db import SessionLocal, get_or_create_user, save_message, get_recent_history
-from app.access_control import is_owner, is_allowed, record_allowed_user, allow_target, remove_target, allowed_list
-from app.llm import get_reply, get_reply_with_image, get_reply_with_document
-from app.media import transcribe_voice, extract_pdf_text
+from app.database.db import SessionLocal, get_or_create_user, save_message, get_recent_history
+from app.bot.access_control import is_owner, is_allowed, record_allowed_user, allow_target, remove_target, allowed_list
+from app.services.llm import get_reply, get_reply_with_image, get_reply_with_document
+from app.services.media import transcribe_voice, extract_pdf_text
 
 WELCOME_MESSAGE = (
     "Hey, I'm Atlas 👋 — your AI finance analyst, right here on Telegram.\n\n"
