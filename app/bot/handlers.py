@@ -305,6 +305,35 @@ async def id_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def myalerts_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await _deny_if_not_allowed(update):
+        return
+    from app.services.alert_engine import list_alerts
+
+    telegram_id = str(update.effective_user.id)
+    db = SessionLocal()
+    try:
+        alerts = list_alerts(db, telegram_id, active_only=True)
+    finally:
+        db.close()
+
+    if not alerts:
+        await update.effective_message.reply_text(
+            "You don't have any active alerts. Just ask me to alert you on something, "
+            "e.g. \"let me know if TCS drops 5%\"."
+        )
+        return
+
+    lines = ["🔔 *Your Active Alerts*\n"]
+    for a in alerts:
+        if a.alert_type in ("PERCENT_DROP", "PERCENT_GAIN") and a.baseline_price:
+            lines.append(f"#{a.id} — {a.ticker}: {a.alert_type} {a.target_value}% (from ₹{a.baseline_price:.2f})")
+        else:
+            lines.append(f"#{a.id} — {a.ticker}: {a.alert_type} {a.target_value}")
+    lines.append("\nAsk me to cancel any of these by number whenever you like.")
+    await _send(update, "\n".join(lines))
+
+
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if await _deny_if_not_allowed(update):

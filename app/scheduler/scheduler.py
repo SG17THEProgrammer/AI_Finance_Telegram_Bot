@@ -1,8 +1,14 @@
 """
-Proactive daily briefings. Runs a check every minute; any onboarded user
-whose briefing_time (HH:MM, IST) matches the current time - and who hasn't
-already gotten today's briefing - gets a proactive message sent to them,
-unprompted, exactly per the brief's "Daily Intelligence" requirement.
+Proactive daily briefings AND threshold alert checks.
+
+Briefings: runs a check every minute; any onboarded user whose briefing_time
+(HH:MM, IST) matches the current time - and who hasn't already gotten today's
+briefing - gets a proactive message sent to them, unprompted.
+
+Alerts: runs every 15 minutes, evaluates every active Alert row against live
+market data (app/services/alert_engine.py) and pushes a Telegram message for
+anything that triggered. Same invite-only access-control gate as briefings -
+a triggered alert is never pushed to a user who isn't on the allowlist.
 """
 
 from datetime import datetime
@@ -13,6 +19,7 @@ from sqlalchemy import or_
 from app.database.db import SessionLocal, User, AllowedUser
 from app.config import OWNER_TELEGRAM_IDS
 from app.services.llm import get_reply
+from app.services.alert_engine import check_active_alerts, format_trigger_message
 from app.bot.handlers import build_profile_summary, _to_telegram_markdown
 
 IST = ZoneInfo("Asia/Kolkata")
@@ -29,6 +36,26 @@ BRIEFING_TRIGGER_PROMPT = (
 )
 
 
+def _is_allowed_recipient(db, telegram_id: str) -> bool:
+    return (
+        telegram_id in OWNER_TELEGRAM_IDS
+        or db.query(AllowedUser).filter(AllowedUser.telegram_id == telegram_id).first() is not None
+    )
+
+
+async def _push_message(bot, chat_id: str, text: str):
+    """Send with Markdown, falling back to plain text - same pattern used
+    for briefings, so a malformed-markdown edge case never crashes the job."""
+    try:
+        formatted = _to_telegram_markdown(text)
+        await bot.send_message(chat_id=int(chat_id), text=formatted, parse_mode="Markdown")
+    except Exception:
+        try:
+            await bot.send_message(chat_id=int(chat_id), text=text)
+        except Exception as exc:
+            print(f"[Push send error for {chat_id}] {type(exc).__name__}: {exc}")
+
+
 async def _send_briefing(bot, user_id: int):
     db = SessionLocal()
     try:
@@ -43,15 +70,7 @@ async def _send_briefing(bot, user_id: int):
             print(f"[Briefing generation error for {user.telegram_id}] {type(exc).__name__}: {exc}")
             return
 
-        try:
-            formatted = _to_telegram_markdown(reply_text)
-            await bot.send_message(chat_id=int(user.telegram_id), text=formatted, parse_mode="Markdown")
-        except Exception:
-            try:
-                await bot.send_message(chat_id=int(user.telegram_id), text=reply_text)
-            except Exception as exc:
-                print(f"[Briefing send error for {user.telegram_id}] {type(exc).__name__}: {exc}")
-                return
+        await _push_message(bot, user.telegram_id, reply_text)
 
         user.last_briefing_date = datetime.now(IST).strftime("%Y-%m-%d")
         db.commit()
@@ -75,11 +94,7 @@ async def _check_and_send_briefings(bot):
             )
             .all()
         )
-        candidates = [
-            u for u in candidates
-            if u.telegram_id in OWNER_TELEGRAM_IDS
-            or db.query(AllowedUser).filter(AllowedUser.telegram_id == u.telegram_id).first() is not None
-        ]
+        candidates = [u for u in candidates if _is_allowed_recipient(db, u.telegram_id)]
         user_ids = [u.id for u in candidates]
     finally:
         db.close()
@@ -88,9 +103,25 @@ async def _check_and_send_briefings(bot):
         await _send_briefing(bot, user_id)
 
 
+async def _check_and_send_alerts(bot):
+    db = SessionLocal()
+    try:
+        triggered = check_active_alerts(db)
+        # Snapshot which telegram_ids are allowed before sending, in this
+        # same session, to avoid a second DB round trip per alert.
+        deliverable = [t for t in triggered if _is_allowed_recipient(db, t["telegram_id"])]
+    finally:
+        db.close()
+
+    for event in deliverable:
+        message = format_trigger_message(event)
+        await _push_message(bot, event["telegram_id"], message)
+
+
 def start_scheduler(bot):
     scheduler = AsyncIOScheduler(timezone=IST)
     scheduler.add_job(_check_and_send_briefings, "interval", minutes=1, args=[bot])
+    scheduler.add_job(_check_and_send_alerts, "interval", minutes=15, args=[bot])
     scheduler.start()
-    print("[Scheduler] Daily briefing check started (every 1 min, IST).")
+    print("[Scheduler] Daily briefing check (1 min) and alert check (15 min) started, IST.")
     return scheduler

@@ -43,9 +43,11 @@ class Alert(Base):
     id = Column(Integer, primary_key=True)
     telegram_id = Column(String, index=True, nullable=False)
     ticker = Column(String, nullable=False)          # e.g., RELIANCE, NIFTY_50
-    alert_type = Column(String, nullable=False)      # e.g., "PRICE_BELOW", "PERCENT_DROP", "RSI_OVERSOLD"
-    target_value = Column(String, nullable=False)    # e.g., "1400", "3%", "30"
+    alert_type = Column(String, nullable=False)      # PRICE_ABOVE, PRICE_BELOW, PERCENT_DROP, PERCENT_GAIN, RSI_OVERSOLD, RSI_OVERBOUGHT
+    target_value = Column(String, nullable=False)    # e.g., "1400", "3" (percent, no % sign), "30" (RSI level)
+    baseline_price = Column(Float, nullable=True)     # snapshot price at creation - used to evaluate PERCENT_DROP/PERCENT_GAIN
     is_active = Column(Integer, default=1)           # 1 for active, 0 for triggered/disabled
+    triggered_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 # -----------------------
 

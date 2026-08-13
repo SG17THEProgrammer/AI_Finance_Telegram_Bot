@@ -261,6 +261,68 @@ TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_market_alert",
+            "description": (
+                "Create a threshold alert that will proactively notify the user later when a "
+                "condition is met - price crossing a level, a percentage move, or an RSI "
+                "overbought/oversold signal. Works for individual stocks (e.g. RELIANCE, AAPL) "
+                "and major indices (NIFTY50, BANKNIFTY, SENSEX, NASDAQ100). Call this whenever "
+                "the user asks to be told/alerted/notified about a future price condition (e.g. "
+                "'let me know when TCS hits 4000', 'alert me if Nifty drops 2%', 'tell me when "
+                "Reliance is oversold'). For PERCENT_DROP/PERCENT_GAIN, the percentage is measured "
+                "from the current price at the moment the alert is created - after calling this, "
+                "always tell the user that exact baseline price so there's no ambiguity."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "ticker": {
+                        "type": "string",
+                        "description": "Stock ticker (e.g. 'RELIANCE', 'AAPL') or index name (NIFTY50, BANKNIFTY, SENSEX, NASDAQ100).",
+                    },
+                    "alert_type": {
+                        "type": "string",
+                        "description": "One of: PRICE_ABOVE, PRICE_BELOW, PERCENT_DROP, PERCENT_GAIN, RSI_OVERSOLD, RSI_OVERBOUGHT.",
+                        "enum": ["PRICE_ABOVE", "PRICE_BELOW", "PERCENT_DROP", "PERCENT_GAIN", "RSI_OVERSOLD", "RSI_OVERBOUGHT"],
+                    },
+                    "target_value": {
+                        "type": "string",
+                        "description": (
+                            "The numeric threshold, no units/symbols - e.g. '4000' for a price level, "
+                            "'3' for a 3% move, '30' for RSI oversold (default 30 if user doesn't "
+                            "specify), '70' for RSI overbought (default 70 if unspecified)."
+                        ),
+                    },
+                },
+                "required": ["ticker", "alert_type", "target_value"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_market_alerts",
+            "description": "List the user's currently active (not yet triggered) alerts. Call this when they ask what alerts they have set, or to check on something they set up earlier.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delete_market_alert",
+            "description": "Cancel/delete one of the user's alerts by its ID. Call list_market_alerts first if you don't already know the ID from context.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "alert_id": {"type": "integer", "description": "The numeric ID of the alert to delete."}
+                },
+                "required": ["alert_id"],
+            },
+        },
+    },
 ]
 
 
@@ -356,5 +418,37 @@ def execute_tool_call(db, telegram_id: str, tool_name: str, arguments: dict) -> 
         if not user or not user.google_refresh_token:
             return json.dumps({"error": "Not connected yet - the user needs to connect their Google account first."})
         return json.dumps(get_sheet_data(user.google_refresh_token, arguments.get("sheet_url", "")))
+
+    if tool_name == "create_market_alert":
+        from app.services.alert_engine import create_alert
+        return json.dumps(create_alert(
+            db, telegram_id,
+            arguments.get("ticker", ""),
+            arguments.get("alert_type", ""),
+            arguments.get("target_value", ""),
+        ))
+
+    if tool_name == "list_market_alerts":
+        from app.services.alert_engine import list_alerts
+        alerts = list_alerts(db, telegram_id, active_only=True)
+        return json.dumps({
+            "alerts": [
+                {
+                    "id": a.id,
+                    "ticker": a.ticker,
+                    "alert_type": a.alert_type,
+                    "target_value": a.target_value,
+                    "baseline_price": a.baseline_price,
+                }
+                for a in alerts
+            ]
+        })
+
+    if tool_name == "delete_market_alert":
+        from app.services.alert_engine import delete_alert
+        alert_id = arguments.get("alert_id")
+        if alert_id is None:
+            return json.dumps({"error": "alert_id is required"})
+        return json.dumps(delete_alert(db, telegram_id, int(alert_id)))
 
     return f"error: unknown tool {tool_name}"
