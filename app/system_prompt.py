@@ -254,3 +254,53 @@ STRICTLY no addition of any jargons like %5C or anything like that
 - If a figure could plausibly come from more than one column (e.g. two different reporting
   periods shown side by side), explicitly state which period/column you're citing.
 """
+
+def get_system_prompt(user_profile: dict = None) -> str:
+    """
+    Constructs a personalized system prompt by injecting the user's saved DB profile
+    and applying SEBI suitability guardrails to the base SYSTEM_PROMPT.
+    """
+    if not user_profile or not user_profile.get("onboarded"):
+        return SYSTEM_PROMPT + "\n\nNote: This user has not completed onboarding yet. Keep answers general and gently invite them to complete their profile with /start if they want tailored insights."
+
+    intent = user_profile.get("intent", "General Research")
+    experience = user_profile.get("experience_level", "Intermediate")
+    goal = user_profile.get("primary_goal", "Wealth Creation")
+    risk = user_profile.get("risk_profile", "Moderate")
+
+    # Construct the personalized context block
+    profile_context = f"""
+=== DYNAMIC USER PROFILE CONTEXT ===
+- Primary Usage Intent: {intent}
+- Experience Level: {experience}
+- Primary Financial Goal: {goal}
+- Risk Profile: {risk}
+
+TAILORING GUIDELINES:
+- Adapt explanation complexity to a user with an '{experience}' skill level.
+- Frame long-term vs. short-term advice around their goal: '{goal}'.
+"""
+
+    # SEBI Compliance & Risk Guardrail Rules
+    risk_guardrail = ""
+    if risk.lower() == "conservative":
+        risk_guardrail = """
+=== SPECIAL RISK GUARDRAIL (CONSERVATIVE INVESTOR) ===
+- The user has a CONSERVATIVE risk appetite.
+- SEBI guidelines mandate that you cannot recommend high-risk investments to conservative investors. 
+- If they ask about high-risk assets (e.g., Crypto, F&O/Options trading, Micro-cap stocks), you MUST issue a clear risk warning BEFORE answering their question.
+- Emphasize capital preservation, diversification, debt instruments, and blue-chip equities.
+"""
+    elif risk.lower() == "moderate":
+        risk_guardrail = """
+=== SPECIAL RISK GUARDRAIL (MODERATE INVESTOR) ===
+- Balance growth opportunities with risk management.
+- Highlight downside risks alongside potential upside metrics when discussing volatile instruments.
+"""
+    elif risk.lower() == "aggressive":
+        risk_guardrail = """
+=== SPECIAL RISK GUARDRAIL (AGGRESSIVE INVESTOR) ===
+- The user accepts higher volatility for growth. Provide deeper technical/fundamental breakdowns, but remind them of stop-loss discipline and position sizing.
+"""
+
+    return f"{SYSTEM_PROMPT}\n\n{profile_context}\n{risk_guardrail}"

@@ -45,14 +45,16 @@ def _is_negative(text: str) -> bool:
 
 def build_profile_summary(user) -> str:
     """A short block appended to the system prompt so the LLM knows what it
-    already knows about this user, and whether onboarding is done."""
+    already knows about this user, and applies SEBI-compliant risk guardrails."""
     name_part = f"Name: {user.first_name}. " if user.first_name else ""
     sheets_part = "Google Sheets: connected. " if user.google_refresh_token else "Google Sheets: not connected. "
 
     if not user.onboarded:
-        return f"USER PROFILE: {name_part}{sheets_part}Not onboarded yet. No other confirmed details so far."
+        return f"USER PROFILE: {name_part}{sheets_part}Not onboarded yet. Keep answers general and invite them to complete their profile with /start."
 
     parts = [f"USER PROFILE: {name_part}{sheets_part}Onboarded."]
+    
+    # Existing fields
     if user.role:
         parts.append(f"Role: {user.role}.")
     if user.sectors:
@@ -61,7 +63,32 @@ def build_profile_summary(user) -> str:
         parts.append(f"Watchlist: {user.watchlist}.")
     if user.briefing_time:
         parts.append(f"Preferred briefing time: {user.briefing_time}.")
-    return " ".join(parts)
+        
+    # NEW: Phase 1 Onboarding fields
+    if user.intent:
+        parts.append(f"Intent: {user.intent}.")
+    if user.experience_level:
+        parts.append(f"Experience: {user.experience_level}.")
+    if user.primary_goal:
+        parts.append(f"Goal: {user.primary_goal}.")
+        
+    risk = user.risk_profile
+    if risk:
+        parts.append(f"Risk Profile: {risk}.")
+        
+    summary = " ".join(parts)
+    
+    # --- SEBI GUARDRAILS ---
+    if risk:
+        summary += "\n\n=== DYNAMIC TAILORING & GUARDRAILS ===\n"
+        if risk.lower() == "conservative":
+            summary += "- SEBI GUARDRAIL (CONSERVATIVE): User has a CONSERVATIVE risk appetite. You MUST issue a clear risk warning BEFORE answering any questions about high-risk assets (Crypto, F&O/Options, Micro-caps). Emphasize capital preservation.\n"
+        elif risk.lower() == "moderate":
+            summary += "- SEBI GUARDRAIL (MODERATE): Balance growth with risk. Highlight downside risks alongside upside metrics.\n"
+        elif risk.lower() == "aggressive":
+            summary += "- SEBI GUARDRAIL (AGGRESSIVE): Accepts higher volatility. Provide deeper technicals but remind of stop-loss discipline.\n"
+
+    return summary
 
 
 # If you send a URL with underscores in it, Telegram will think you are trying to make the text italic, fail to parse it, and silently crash your bot.

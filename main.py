@@ -8,6 +8,7 @@ Usage (after deployment, with PUBLIC_WEBHOOK_URL set in .env):
 """
 from contextlib import asynccontextmanager
 
+from app.bot.onboarding import onboarding_handler
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 
@@ -24,7 +25,7 @@ from app.scheduler import start_scheduler
 # This takes your secret Telegram Token and creates the bot object.
 telegram_app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
 
-telegram_app.add_handler(CommandHandler("start", start_command))
+telegram_app.add_handler(onboarding_handler)
 telegram_app.add_handler(CommandHandler("allow", allow_command))
 telegram_app.add_handler(CommandHandler("remove", remove_command))
 telegram_app.add_handler(CommandHandler("allowed", allowed_command))
