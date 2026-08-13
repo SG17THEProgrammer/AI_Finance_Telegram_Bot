@@ -381,7 +381,6 @@ async def _handle_text_inner(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await _send(update, reply_text)
 
     # NEW: Check if the AI generated a chart during its thought process
-    import os
     chart_path = f"chart_{telegram_id}.png"
     if os.path.exists(chart_path):
         try:
