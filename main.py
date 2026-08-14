@@ -18,7 +18,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 
 from app.config import TELEGRAM_BOT_TOKEN, PUBLIC_WEBHOOK_URL, ADMIN_UPLOAD_TOKEN
 from app.database.db import init_db, SessionLocal, get_or_create_user, engine, DATABASE_URL
-from app.bot.handlers import handle_text, handle_voice, handle_photo, handle_document, allow_command, remove_command, allowed_command, id_command, myalerts_command
+from app.bot.handlers import handle_text, handle_voice, handle_photo, handle_document, allow_command, remove_command, allowed_command, id_command, myalerts_command , unknown_command
 from app.integrations.google_oauth import exchange_code_for_tokens
 from app.scheduler.scheduler import start_scheduler
 
@@ -32,6 +32,7 @@ telegram_app.add_handler(CommandHandler("allow", allow_command))
 telegram_app.add_handler(CommandHandler("remove", remove_command))
 telegram_app.add_handler(CommandHandler("allowed", allowed_command))
 
+telegram_app.add_handler(MessageHandler(filters.COMMAND, unknown_command))
 
 telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 telegram_app.add_handler(MessageHandler(filters.VOICE, handle_voice))

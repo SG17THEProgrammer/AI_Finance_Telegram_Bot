@@ -49,6 +49,23 @@ INDEX_ALIASES = {
     "NASDAQ 100": "^NDX",
 }
 
+PERCENT_TYPES = {"PERCENT_DROP", "PERCENT_GAIN"}
+RSI_TYPES = {"RSI_OVERSOLD", "RSI_OVERBOUGHT"}
+
+
+def _is_index(ticker: str) -> bool:
+    """True when the alert ticker maps to a yfinance index symbol."""
+    key = ticker.strip().upper()
+    return key in INDEX_ALIASES or _resolve_symbol(key).startswith("^")
+
+
+def _today_ist_str() -> str:
+    """Return today's date in ISO format for IST timezone."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    return datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d")
+
 
 def _resolve_symbol(ticker: str) -> str:
     """Returns the actual yfinance-fetchable symbol for a user-given ticker,
@@ -105,12 +122,6 @@ def get_price_and_rsi(ticker: str) -> dict:
 
 
 def create_alert(db, telegram_id: str, ticker: str, alert_type: str, target_value: str) -> dict:
-    """
-    Validates and stores a new alert. For PERCENT_DROP/PERCENT_GAIN, snapshots
-    the current price as the baseline the percentage is measured from - the
-    caller (LLM) should tell the user this baseline explicitly, since "drops
-    5%" is relative to right now, not to today's opening price.
-    """
     from app.database.db import Alert
 
     alert_type = alert_type.strip().upper()
@@ -122,19 +133,36 @@ def create_alert(db, telegram_id: str, ticker: str, alert_type: str, target_valu
     except ValueError:
         return {"error": f"target_value must be numeric, got '{target_value}'."}
 
+    ticker_clean = ticker.strip().upper()
+    is_index = _is_index(ticker_clean)
+    is_recurring = alert_type in RSI_TYPES or (alert_type in PERCENT_TYPES and is_index)
+
+    # Always fetch current price — needed as baseline for PERCENT alerts,
+    # and returned to the LLM so it can tell the user the current level
+    # regardless of alert type (PRICE_BELOW at 1350 when price is 1310 is
+    # a meaningful signal the user should see, not silently skip).
+    quote = get_price_and_rsi(ticker)
+    if "error" in quote:
+        return quote
+
+    current_price = quote["price"]
+    current_rsi = quote.get("rsi")
+
     baseline_price = None
-    if alert_type in ("PERCENT_DROP", "PERCENT_GAIN"):
-        quote = get_price_and_rsi(ticker)
-        if "error" in quote:
-            return quote
-        baseline_price = quote["price"]
+    baseline_date = None
+    if alert_type in PERCENT_TYPES:
+        baseline_price = current_price
+        baseline_date = _today_ist_str()
 
     alert = Alert(
         telegram_id=telegram_id,
-        ticker=ticker.strip().upper(),
+        ticker=ticker_clean,
         alert_type=alert_type,
         target_value=str(target_num),
         baseline_price=baseline_price,
+        baseline_date=baseline_date,
+        is_recurring=1 if is_recurring else 0,
+        armed=1,
         is_active=1,
     )
     db.add(alert)
@@ -147,7 +175,10 @@ def create_alert(db, telegram_id: str, ticker: str, alert_type: str, target_valu
         "ticker": alert.ticker,
         "alert_type": alert_type,
         "target_value": target_num,
+        "current_price": current_price,
+        "current_rsi": current_rsi,
         "baseline_price": baseline_price,
+        "is_recurring": is_recurring,
     }
 
 
