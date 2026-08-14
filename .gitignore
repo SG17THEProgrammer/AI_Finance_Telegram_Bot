@@ -4,6 +4,7 @@ __pycache__/
 venv/
 .venv/
 atlas.db
+atlas1.db
 *.db
 .DS_Store
 Atlas AI
