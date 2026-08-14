@@ -326,10 +326,18 @@ async def myalerts_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     lines = ["🔔 *Your Active Alerts*\n"]
     for a in alerts:
+        # Build the alert description
         if a.alert_type in ("PERCENT_DROP", "PERCENT_GAIN") and a.baseline_price:
-            lines.append(f"#{a.id} — {a.ticker}: {a.alert_type} {a.target_value}% (from ₹{a.baseline_price:.2f})")
+            desc = f"{a.alert_type} {a.target_value}% (from ₹{a.baseline_price:.2f})"
+            if a.baseline_date:
+                desc += f" as of {a.baseline_date}"
         else:
-            lines.append(f"#{a.id} — {a.ticker}: {a.alert_type} {a.target_value}")
+            desc = f"{a.alert_type} {a.target_value}"
+
+        # Add recurring badge if applicable
+        recurring_badge = " 🔄 *recurring*" if a.is_recurring else ""
+        lines.append(f"#{a.id} — {a.ticker}: {desc}{recurring_badge}")
+
     lines.append("\nAsk me to cancel any of these by number whenever you like.")
     await _send(update, "\n".join(lines))
 

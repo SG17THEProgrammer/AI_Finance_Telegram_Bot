@@ -45,9 +45,12 @@ class Alert(Base):
     ticker = Column(String, nullable=False)          # e.g., RELIANCE, NIFTY_50
     alert_type = Column(String, nullable=False)      # PRICE_ABOVE, PRICE_BELOW, PERCENT_DROP, PERCENT_GAIN, RSI_OVERSOLD, RSI_OVERBOUGHT
     target_value = Column(String, nullable=False)    # e.g., "1400", "3" (percent, no % sign), "30" (RSI level)
-    baseline_price = Column(Float, nullable=True)     # snapshot price at creation - used to evaluate PERCENT_DROP/PERCENT_GAIN
-    is_active = Column(Integer, default=1)           # 1 for active, 0 for triggered/disabled
-    triggered_at = Column(DateTime, nullable=True)
+    baseline_price = Column(Float, nullable=True)     # snapshot price - used to evaluate PERCENT_DROP/PERCENT_GAIN; resets daily for recurring index alerts
+    baseline_date = Column(String, nullable=True)     # "YYYY-MM-DD" (IST) baseline_price was captured on - only meaningful for recurring index alerts
+    is_recurring = Column(Integer, default=0)        # 1 = keeps watching after triggering (RSI alerts, index percent alerts); 0 = one-shot
+    armed = Column(Integer, default=1)                # 1 = ready to fire; 0 = already fired, waiting to re-arm (recurring alerts only)
+    is_active = Column(Integer, default=1)           # 1 for active, 0 for triggered/disabled (one-shot alerts only - recurring alerts stay 1 until user deletes them)
+    triggered_at = Column(DateTime, nullable=True)    # last time this alert fired (recurring alerts update this each time, not just once)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 # -----------------------
 
