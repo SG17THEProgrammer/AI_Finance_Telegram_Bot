@@ -74,8 +74,50 @@ class Message(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
+def _run_lightweight_migrations():
+    """
+    create_all() only creates tables that don't exist yet - it silently does
+    nothing for tables that already exist but are missing newly-added
+    columns (e.g. restoring an older backup, or deploying against a DB
+    created before intent/risk_profile/baseline_price etc. existed). This
+    adds any missing columns via ALTER TABLE ADD COLUMN, without touching
+    existing data.
+
+    SQLite's ADD COLUMN only supports adding nullable columns with no
+    complex constraints - which matches every column added so far. If a
+    future column needs a NOT NULL constraint or a foreign key, this simple
+    approach won't be enough and a real migration tool (Alembic) should be
+    used instead.
+    """
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(engine)
+    existing_tables = set(inspector.get_table_names())
+
+    for table in Base.metadata.sorted_tables:
+        if table.name not in existing_tables:
+            continue  # create_all() already created this one fresh, with all current columns
+
+        existing_columns = {col["name"] for col in inspector.get_columns(table.name)}
+        for column in table.columns:
+            if column.name in existing_columns:
+                continue
+
+            col_type = column.type.compile(engine.dialect)
+            ddl = f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" {col_type}'
+            try:
+                with engine.begin() as conn:
+                    conn.execute(text(ddl))
+                print(f"[DB migration] Added missing column {table.name}.{column.name}")
+            except Exception as exc:
+                # Don't crash startup over a migration hiccup (e.g. a concurrent
+                # deploy racing to add the same column) - log it and move on.
+                print(f"[DB migration] Could not add {table.name}.{column.name}: {exc}")
+
+
 def init_db():
     Base.metadata.create_all(bind=engine)
+    _run_lightweight_migrations()
 
 
 def get_session():
