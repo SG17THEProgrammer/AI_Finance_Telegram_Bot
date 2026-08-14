@@ -148,6 +148,31 @@ def create_alert(db, telegram_id: str, ticker: str, alert_type: str, target_valu
     current_price = quote["price"]
     current_rsi = quote.get("rsi")
 
+    # Check if the condition is already met right now — creating an alert
+    # that would fire instantly (or in the next 10-min cycle) with no real
+    # watch period is almost never what the user meant. Return a clear flag
+    # so the LLM can inform them rather than silently setting a useless alert.
+    instant_trigger = False
+    if alert_type == "PRICE_BELOW" and current_price <= target_num:
+        instant_trigger = True
+    elif alert_type == "PRICE_ABOVE" and current_price >= target_num:
+        instant_trigger = True
+    elif alert_type == "RSI_OVERSOLD" and current_rsi is not None and current_rsi <= target_num:
+        instant_trigger = True
+    elif alert_type == "RSI_OVERBOUGHT" and current_rsi is not None and current_rsi >= target_num:
+        instant_trigger = True
+
+    if instant_trigger:
+        return {
+            "already_met": True,
+            "ticker": ticker_clean,
+            "alert_type": alert_type,
+            "target_value": target_num,
+            "current_price": current_price,
+            "current_rsi": current_rsi,
+        }
+
+    # Condition is not yet met — safe to create the alert
     baseline_price = None
     baseline_date = None
     if alert_type in PERCENT_TYPES:

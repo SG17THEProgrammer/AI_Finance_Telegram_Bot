@@ -342,6 +342,47 @@ async def myalerts_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _send(update, "\n".join(lines))
 
 
+# Maps common typos/variants → the correct command.
+# Manual is better than fuzzy-string here: you know your own commands and
+# the obvious ways users will mis-type them. Fuzzy scoring picks wrong
+# matches (e.g. /alerts → /allowed via shared characters) while this
+# approach is always deterministic and never surprising.
+_COMMAND_ALIASES = {
+    # /myalerts variants
+    "alerts": "myalerts",
+    "alert": "myalerts",
+    "myalert": "myalerts",
+    "setalert": "myalerts",
+    "setalerts": "myalerts",
+    "myalert": "myalerts",
+    # /profile variants
+    "profiles": "profile",
+    "profle": "profile",
+    "proile": "profile",
+    "prifle": "profile",
+    "prof": "profile",
+    # /start variants
+    "begin": "start",
+    "setup": "start",
+    "init": "start",
+    "onboard": "start",
+    # /allowed variants
+    "allowlist": "allowed",
+    "whitelist": "allowed",
+    "users": "allowed",
+    # /allow variants
+    "adduser": "allow",
+    "add": "allow",
+    # /remove variants
+    "delete": "remove",
+    "ban": "remove",
+    "revoke": "remove",
+    # /id variants
+    "myid": "id",
+    "userid": "id",
+    "chatid": "id",
+}
+
 # All registered bot commands - used to find the closest match when an
 # unknown command is sent. Keep this in sync with what's registered in
 # main.py and run_polling.py.
@@ -349,56 +390,24 @@ _KNOWN_COMMANDS = [
     "start", "profile", "myalerts", "allow", "remove", "allowed", "id"
 ]
 
-def _closest_command(unknown: str) -> str | None:
-    """Returns the closest known command to the given string, or None if
-    nothing is close enough to suggest. Uses simple character-overlap
-    scoring - good enough for one-word command typos."""
-    unknown = unknown.lstrip("/").lower().strip()
-    if not unknown:
-        return None
-
-    best_match = None
-    best_score = 0
-
-    for cmd in _KNOWN_COMMANDS:
-        # Score = length of longest common prefix + shared characters
-        prefix_len = 0
-        for a, b in zip(unknown, cmd):
-            if a == b:
-                prefix_len += 1
-            else:
-                break
-        shared = len(set(unknown) & set(cmd))
-        score = prefix_len * 2 + shared  # prefix matters more than scattered matches
-
-        # Only suggest if meaningfully similar (avoids suggesting "start"
-        # for completely unrelated input like "/xyz")
-        if score >= 3 and score > best_score:
-            best_score = score
-            best_match = cmd
-
-    return best_match
-
 
 async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles any command the bot doesn't recognise — suggests the closest
-    known command if there's a reasonable match, or says what's available."""
+    """Handles unrecognised commands. Looks up the alias map first for a
+    confident suggestion, falls back to listing all commands if nothing
+    matches — never stays silent."""
     if await _deny_if_not_allowed(update):
         return
 
-    raw = update.message.text.split()[0] if update.message and update.message.text else ""
-    suggestion = _closest_command(raw)
+    raw = (update.message.text or "").split()[0].lstrip("/").lower().strip()
+    suggestion = _COMMAND_ALIASES.get(raw)
 
     if suggestion:
-        await _send(
-            update,
-            f"I don't recognise `{raw}`. Did you mean `/{suggestion}`?"
-        )
+        await _send(update, f"Did you mean `/{suggestion}`?")
     else:
         cmds = ", ".join(f"`/{c}`" for c in _KNOWN_COMMANDS)
         await _send(
             update,
-            f"I don't recognise `{raw}`. Available commands: {cmds}"
+            f"I don't recognise `/{raw}`. Here are all my commands: {cmds}"
         )
 
 
