@@ -13,6 +13,42 @@ from app.bot.access_control import is_owner, is_allowed, record_allowed_user, al
 from app.services.llm import get_reply, get_reply_with_image, get_reply_with_document
 from app.services.media import transcribe_voice, extract_pdf_text
 
+# ── User rate limiter ──────────────────────────────────────────────────────────
+import time
+from collections import defaultdict
+
+_rate_limit_store: dict[str, list[float]] = defaultdict(list)
+_RATE_LIMIT_MAX = 25        # max messages
+_RATE_LIMIT_WINDOW = 3600   # per 3600 seconds (1 hour)
+
+
+def _is_rate_limited(telegram_id: str) -> tuple[bool, int]:
+    """
+    Returns (is_limited, seconds_until_reset).
+    Cleans up old timestamps on each call — no background thread needed.
+    Owners (in OWNER_TELEGRAM_IDS) are always exempt.
+    """
+    from app.config import OWNER_TELEGRAM_IDS
+    if telegram_id in OWNER_TELEGRAM_IDS:
+        return False, 0
+
+    now = time.time()
+    window_start = now - _RATE_LIMIT_WINDOW
+
+    # Prune timestamps outside the window
+    _rate_limit_store[telegram_id] = [
+        t for t in _rate_limit_store[telegram_id] if t > window_start
+    ]
+
+    if len(_rate_limit_store[telegram_id]) >= _RATE_LIMIT_MAX:
+        oldest = min(_rate_limit_store[telegram_id])
+        reset_in = int(oldest + _RATE_LIMIT_WINDOW - now)
+        return True, max(reset_in, 1)
+
+    _rate_limit_store[telegram_id].append(now)
+    return False, 0
+
+
 WELCOME_MESSAGE = (
     "Hey, I'm Atlas 👋 — your AI finance analyst, right here on Telegram.\n\n"
     "I can help you research companies, track markets, analyze financial news "
@@ -444,6 +480,21 @@ async def _handle_text_inner(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if await _deny_if_not_allowed(update):
         return
     telegram_id = str(update.effective_user.id)
+
+    # ── Rate limit check ──
+    limited, reset_in = _is_rate_limited(telegram_id)
+    if limited:
+        mins = reset_in // 60
+        secs = reset_in % 60
+        await update.message.reply_text(
+            f"⏱ You've sent {_RATE_LIMIT_MAX} messages this hour.\n\n"
+            f"Rate limit resets in *{mins}m {secs}s*. "
+            "This keeps Atlas responsive for everyone 🙏",
+            parse_mode="Markdown"
+        )
+        return
+    # ── End rate limit ──
+
     first_name = update.effective_user.first_name
     user_text = update.message.text
     chat_id = update.effective_chat.id
@@ -534,6 +585,19 @@ async def _handle_voice_inner(update: Update, context: ContextTypes.DEFAULT_TYPE
     if await _deny_if_not_allowed(update):
         return
     telegram_id = str(update.effective_user.id)
+     # ── Rate limit check ──
+    limited, reset_in = _is_rate_limited(telegram_id)
+    if limited:
+        mins = reset_in // 60
+        secs = reset_in % 60
+        await update.message.reply_text(
+            f"⏱ You've sent {_RATE_LIMIT_MAX} messages this hour.\n\n"
+            f"Rate limit resets in *{mins}m {secs}s*. "
+            "This keeps Atlas responsive for everyone 🙏",
+            parse_mode="Markdown"
+        )
+        return
+    # ── End rate limit ──
     first_name = update.effective_user.first_name
     chat_id = update.effective_chat.id
 
@@ -589,6 +653,19 @@ async def _handle_photo_inner(update: Update, context: ContextTypes.DEFAULT_TYPE
     if await _deny_if_not_allowed(update):
         return
     telegram_id = str(update.effective_user.id)
+     # ── Rate limit check ──
+    limited, reset_in = _is_rate_limited(telegram_id)
+    if limited:
+        mins = reset_in // 60
+        secs = reset_in % 60
+        await update.message.reply_text(
+            f"⏱ You've sent {_RATE_LIMIT_MAX} messages this hour.\n\n"
+            f"Rate limit resets in *{mins}m {secs}s*. "
+            "This keeps Atlas responsive for everyone 🙏",
+            parse_mode="Markdown"
+        )
+        return
+    # ── End rate limit ──
     first_name = update.effective_user.first_name
     chat_id = update.effective_chat.id
     caption = update.message.caption or ""
@@ -636,6 +713,19 @@ async def _handle_document_inner(update: Update, context: ContextTypes.DEFAULT_T
     if await _deny_if_not_allowed(update):
         return
     telegram_id = str(update.effective_user.id)
+     # ── Rate limit check ──
+    limited, reset_in = _is_rate_limited(telegram_id)
+    if limited:
+        mins = reset_in // 60
+        secs = reset_in % 60
+        await update.message.reply_text(
+            f"⏱ You've sent {_RATE_LIMIT_MAX} messages this hour.\n\n"
+            f"Rate limit resets in *{mins}m {secs}s*. "
+            "This keeps Atlas responsive for everyone 🙏",
+            parse_mode="Markdown"
+        )
+        return
+    # ── End rate limit ──
     first_name = update.effective_user.first_name
     chat_id = update.effective_chat.id
     caption = update.message.caption or ""

@@ -102,6 +102,23 @@ async def _check_and_send_briefings(bot):
     for user_id in user_ids:
         await _send_briefing(bot, user_id)
 
+async def _reset_index_baselines(bot):
+    """
+    Runs at 9:16 AM IST on weekdays (just after market open).
+    Resets baseline_price on all recurring PERCENT_DROP/GAIN index alerts
+    so "alert me if Nifty drops 0.5% today" uses today's open, not creation price.
+    """
+    from app.database.db import SessionLocal
+    from app.services.alert_engine import reset_daily_baselines
+    db = SessionLocal()
+    try:
+        count = reset_daily_baselines(db)
+        print(f"[Scheduler] Reset {count} index baselines for today.")
+    except Exception as exc:
+        print(f"[Scheduler] Baseline reset error: {exc}")
+    finally:
+        db.close()
+
 
 async def _check_and_send_alerts(bot):
     db = SessionLocal()
@@ -117,11 +134,78 @@ async def _check_and_send_alerts(bot):
         message = format_trigger_message(event)
         await _push_message(bot, event["telegram_id"], message)
 
+# ── Rate monitoring config ────────────────────────────────────────────────────
+# Approximate daily limits (adjust to your actual plan limits)
+_GEMINI_DAILY_LIMIT = 1500    # gemini-2.0-flash free tier: ~1500 req/day
+_GROQ_DAILY_LIMIT   = 14400   # groq free: ~14400 req/day (10 RPM * 60 * 24)
+
+_RATE_ALERT_SENT = {}   # {"gemini_50": "2026-08-15", ...} — in-memory, resets on restart
+
+async def _check_api_rate_limits(bot):
+    """
+    Estimates today's LLM API usage from the messages table.
+    Sends Telegram alerts to the owner at 50%, 90%, and 100% of daily limit.
+    Only sends to OWNER_TELEGRAM_IDS — never to regular users.
+    """
+    from app.database.db import SessionLocal, Message
+    from app.config import OWNER_TELEGRAM_IDS
+    from datetime import datetime, timezone
+
+    db = SessionLocal()
+    today_str = datetime.now(IST).strftime("%Y-%m-%d")
+
+    try:
+        # Count assistant messages today as a proxy for LLM calls
+        # Each assistant reply ≈ 1 Gemini call (may be 2 with tool use)
+        today_count = db.query(Message).filter(
+            Message.role == "assistant",
+            Message.created_at >= datetime.now(IST).replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
+        ).count()
+    finally:
+        db.close()
+
+    # We don't know Gemini vs Groq split, so use total as worst-case for Gemini
+    for api_name, limit in [("gemini", _GEMINI_DAILY_LIMIT)]:
+        pct = (today_count / limit) * 100
+
+        thresholds = [(100, "🔴 EXHAUSTED"), (90, "🟠 90%"), (50, "🟡 50%")]
+        for threshold, label in thresholds:
+            key = f"{api_name}_{threshold}_{today_str}"
+            if pct >= threshold and key not in _RATE_ALERT_SENT:
+                _RATE_ALERT_SENT[key] = True
+                msg = (
+                    f"⚠️ *Atlas API Usage Alert*\n\n"
+                    f"API: *{api_name.upper()}*\n"
+                    f"Status: *{label}*\n"
+                    f"Today's LLM calls (est): *{today_count}* / {limit}\n"
+                    f"Usage: *{pct:.0f}%*\n\n"
+                    f"{'🚨 Bot may stop responding until midnight IST.' if threshold == 100 else 'Monitor usage closely.'}"
+                )
+                for owner_id in OWNER_TELEGRAM_IDS:
+                    try:
+                        await bot.send_message(
+                            chat_id=int(owner_id), text=msg, parse_mode="Markdown"
+                        )
+                    except Exception as exc:
+                        print(f"[RateMonitor] Failed to notify owner {owner_id}: {exc}")
+                break  # only send highest threshold hit
+
 
 def start_scheduler(bot):
     scheduler = AsyncIOScheduler(timezone=IST)
     scheduler.add_job(_check_and_send_briefings, "interval", minutes=1, args=[bot])
-    scheduler.add_job(_check_and_send_alerts, "interval", minutes=10, args=[bot])
+    scheduler.add_job(_check_and_send_alerts, "interval", minutes=15, args=[bot])
+    scheduler.add_job(
+    _reset_index_baselines, "cron",
+    day_of_week="mon-fri", hour=9, minute=16,
+    args=[bot], timezone=IST
+)
+    scheduler.add_job(
+    _check_api_rate_limits, "interval",
+    minutes=60, args=[bot]
+)
     scheduler.start()
     print("[Scheduler] Daily briefing check (1 min) and alert check (15 min) started, IST.")
     return scheduler

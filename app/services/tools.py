@@ -455,6 +455,73 @@ TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_trailing_days_alert",
+            "description": (
+                "Creates an alert that fires when a stock or index has been going "
+                "down (or up) for a certain number of days out of a recent window. "
+                "Use this when the user says things like: 'alert me when Nifty trails "
+                "for more than 5 days out of 8', 'notify me if the market has been "
+                "falling for 5 of the last 10 days', 'sustained downtrend alert'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "ticker": {
+                        "type": "string",
+                        "description": "Stock or index ticker (e.g. 'NIFTY50', 'TCS', 'SENSEX')."
+                    },
+                    "direction": {
+                        "type": "string",
+                        "enum": ["up", "down"],
+                        "description": "'down' for bearish trailing (most common), 'up' for bullish."
+                    },
+                    "trigger_days": {
+                        "type": "integer",
+                        "description": "How many days out of the window must match (e.g. 5)."
+                    },
+                    "window_days": {
+                        "type": "integer",
+                        "description": "The total window of trading days to look at (e.g. 8)."
+                    },
+                },
+                "required": ["ticker", "direction", "trigger_days", "window_days"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_lagged_percent_alert",
+            "description": (
+                "Creates an alert that fires when a stock/index drops a certain percentage "
+                "compared to its price N trading days ago (rolling window). "
+                "Use when user says: 'alert if Nifty drops 1% over 5 days', "
+                "'notify me if the market is down 2% vs last week', "
+                "'5-day lag drop alert for Sensex'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "ticker": {
+                        "type": "string",
+                        "description": "Stock or index ticker (e.g. 'NIFTY50', 'SENSEX')."
+                    },
+                    "drop_pct": {
+                        "type": "number",
+                        "description": "Percentage drop threshold (e.g. 1.5 for 1.5%). Use midpoint if user gives a range like '1-2%' → 1.5."
+                    },
+                    "lag_days": {
+                        "type": "integer",
+                        "description": "Number of trading days to look back for the comparison (e.g. 5 or 10)."
+                    },
+                },
+                "required": ["ticker", "drop_pct", "lag_days"],
+            },
+        },
+    },
 ]
 
 
@@ -618,5 +685,26 @@ def execute_tool_call(db, telegram_id: str, tool_name: str, arguments: dict) -> 
         if alert_id is None:
             return json.dumps({"error": "alert_id is required"})
         return json.dumps(delete_alert(db, telegram_id, int(alert_id)))
+
+    if tool_name == "create_trailing_days_alert":
+        from app.services.alert_engine import create_trailing_days_alert
+        return json.dumps(create_trailing_days_alert(
+            db,
+            telegram_id,
+            arguments.get("ticker", ""),
+            arguments.get("direction", "down"),
+            int(arguments.get("trigger_days", 5)),
+            int(arguments.get("window_days", 8)),
+        ))
+
+    if tool_name == "create_lagged_percent_alert":
+        from app.services.alert_engine import create_lagged_percent_alert
+        return json.dumps(create_lagged_percent_alert(
+            db,
+            telegram_id,
+            arguments.get("ticker", ""),
+            float(arguments.get("drop_pct", 1.0)),
+            int(arguments.get("lag_days", 5)),
+        ))
 
     return f"error: unknown tool {tool_name}"

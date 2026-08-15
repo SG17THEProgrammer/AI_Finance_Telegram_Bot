@@ -62,7 +62,7 @@ def _score_to_profile(score: int) -> str:
 def _make_keyboard(buttons: list) -> InlineKeyboardMarkup:
     """Each item in buttons is (label, callback_data). One button per row."""
     return InlineKeyboardMarkup([[InlineKeyboardButton(label, callback_data=data)]
-                                  for label, data in buttons])
+                                 for label, data in buttons])
 
 
 async def _reply(update: Update, text: str, keyboard=None):
@@ -82,6 +82,24 @@ async def _reply(update: Update, text: str, keyboard=None):
 # ---------------------------------------------------------------------------
 
 async def start_onboarding(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # ── ACCESS CONTROL GATE ────────────────────────────────────────────────────
+    from app.database.db import SessionLocal
+    from app.bot.access_control import is_allowed, record_allowed_user
+
+    db = SessionLocal()
+    try:
+        if not is_allowed(update, db):
+            await update.effective_message.reply_text(
+                "🔒 This is an invite-only bot.\n\n"
+                "You haven't been granted access yet. "
+                "Please contact the admin to get added."
+            )
+            return ConversationHandler.END  # exits the conversation immediately
+        record_allowed_user(db, update)
+    finally:
+        db.close()
+    # ── END ACCESS CONTROL ─────────────────────────────────────────────────────
+    
     telegram_id = str(update.effective_user.id)
     first_name = update.effective_user.first_name
 
@@ -162,7 +180,8 @@ async def ask_experience(update: Update, context: ContextTypes.DEFAULT_TYPE, is_
 async def handle_experience_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    context.user_data["experience_level"] = query.data.split("_")[1].capitalize()
+    context.user_data["experience_level"] = query.data.split("_")[
+        1].capitalize()
 
     text = "*What's your typical investment time horizon?*"
     keyboard = _make_keyboard([
@@ -220,7 +239,7 @@ async def handle_goal_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
         "goal_capital":   "Capital appreciation",
         "goal_income":    "Regular income",
         "goal_purchase":  "Major future purchase",
-        "goal_retirement":"Retirement",
+        "goal_retirement": "Retirement",
     }
     context.user_data["primary_goal"] = goal_map[query.data]
     return await ask_markets(update, context)
@@ -235,16 +254,53 @@ async def handle_custom_goal(update: Update, context: ContextTypes.DEFAULT_TYPE)
 # STEP 5 — PREFERRED MARKETS
 # ---------------------------------------------------------------------------
 
+# async def ask_markets(update: Update, context: ContextTypes.DEFAULT_TYPE, is_message=False):
+#     text = "*Which markets do you follow?*\n\n_Pick your primary market (you can tell me about others later)._"
+#     keyboard = _make_keyboard([
+#         ("🇮🇳 Indian Stocks (NSE / BSE)", "market_india"),
+#         ("🇺🇸 US Stocks (NYSE / NASDAQ)", "market_us"),
+#         ("🪙 Crypto", "market_crypto"),
+#         ("📊 ETFs", "market_etf"),
+#         ("🏦 Mutual Funds", "market_mf"),
+#         ("🌎 Global / Multiple", "market_global"),
+#     ])
+#     if is_message:
+#         await update.message.reply_text(text, reply_markup=keyboard, parse_mode="Markdown")
+#     else:
+#         await update.callback_query.edit_message_text(text, reply_markup=keyboard, parse_mode="Markdown")
+#     return ASK_MARKETS
+
+# ── Market multi-select state ──────────────────────────────────────────────────
+
+MARKET_OPTIONS = [
+    ("🇮🇳 Indian Stocks", "indian_stocks"),
+    ("🇺🇸 US Stocks", "us_stocks"),
+    ("🪙 Crypto", "crypto"),
+    ("📊 ETFs", "etfs"),
+    ("🏦 Mutual Funds", "mutual_funds"),
+    ("🌎 Global / Multiple", "global"),
+]
+
+
+def _build_market_keyboard(selected: set) -> InlineKeyboardMarkup:
+    """Builds the markets keyboard with ✅ on already-selected options."""
+    buttons = []
+    for label, code in MARKET_OPTIONS:
+        prefix = "✅ " if code in selected else ""
+        buttons.append([InlineKeyboardButton(
+            f"{prefix}{label}", callback_data=f"mkt_{code}")])
+    buttons.append([InlineKeyboardButton(
+        "✓ Done — continue", callback_data="mkt_done")])
+    return InlineKeyboardMarkup(buttons)
+
+
 async def ask_markets(update: Update, context: ContextTypes.DEFAULT_TYPE, is_message=False):
-    text = "*Which markets do you follow?*\n\n_Pick your primary market (you can tell me about others later)._"
-    keyboard = _make_keyboard([
-        ("🇮🇳 Indian Stocks (NSE / BSE)", "market_india"),
-        ("🇺🇸 US Stocks (NYSE / NASDAQ)", "market_us"),
-        ("🪙 Crypto", "market_crypto"),
-        ("📊 ETFs", "market_etf"),
-        ("🏦 Mutual Funds", "market_mf"),
-        ("🌎 Global / Multiple", "market_global"),
-    ])
+    if "selected_markets" not in context.user_data:
+        context.user_data["selected_markets"] = set()
+
+    text = "Which markets do you follow? *(select all that apply, then tap Done)*"
+    keyboard = _build_market_keyboard(context.user_data["selected_markets"])
+
     if is_message:
         await update.message.reply_text(text, reply_markup=keyboard, parse_mode="Markdown")
     else:
@@ -252,19 +308,30 @@ async def ask_markets(update: Update, context: ContextTypes.DEFAULT_TYPE, is_mes
     return ASK_MARKETS
 
 
-async def handle_markets_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_market_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Toggles a market option on/off without advancing the state."""
     query = update.callback_query
     await query.answer()
-    market_map = {
-        "market_india":  "Indian Stocks",
-        "market_us":     "US Stocks",
-        "market_crypto": "Crypto",
-        "market_etf":    "ETFs",
-        "market_mf":     "Mutual Funds",
-        "market_global": "Global / Multiple",
-    }
-    context.user_data["preferred_markets"] = market_map[query.data]
-    return await ask_risk_q1(update, context)
+
+    code = query.data[4:]  # strip "mkt_"
+
+    if code == "done":
+        selected = context.user_data.get("selected_markets", set())
+        context.user_data["preferred_markets"] = ",".join(
+            selected) if selected else "not specified"
+        return await ask_risk(update, context)
+
+    selected = context.user_data.get("selected_markets", set())
+    if code in selected:
+        selected.discard(code)
+    else:
+        selected.add(code)
+    context.user_data["selected_markets"] = selected
+
+    # Re-render same message with updated checkmarks
+    keyboard = _build_market_keyboard(selected)
+    await query.edit_message_reply_markup(reply_markup=keyboard)
+    return ASK_MARKETS  # stay in same state
 
 
 # ---------------------------------------------------------------------------
@@ -347,55 +414,226 @@ async def handle_risk_q3(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # STEP 7 — WATCHLIST + FINALIZE
 # ---------------------------------------------------------------------------
 
-async def handle_watchlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# async def handle_watchlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
+#     raw = update.message.text.strip()
+#     if raw.lower() != "skip":
+#         tickers = [t.strip().upper() for t in raw.replace(",", " ").split() if t.strip()]
+#         context.user_data["watchlist"] = ", ".join(tickers[:5])
+
+#     telegram_id = str(update.effective_user.id)
+#     db = SessionLocal()
+#     try:
+#         user = get_or_create_user(db, telegram_id)
+#         user.intent = context.user_data.get("intent")
+#         user.experience_level = context.user_data.get("experience_level")
+#         user.investment_horizon = context.user_data.get("investment_horizon")
+#         user.primary_goal = context.user_data.get("primary_goal")
+#         user.preferred_markets = context.user_data.get("preferred_markets")
+#         user.risk_profile = context.user_data.get("risk_profile")
+#         if context.user_data.get("watchlist"):
+#             user.watchlist = context.user_data["watchlist"]
+#         user.onboarded = 1
+#         db.commit()
+#     finally:
+#         db.close()
+
+#     risk = context.user_data.get("risk_profile", "")
+#     risk_desc = {
+#         "Conservative": "You prefer stability and capital preservation.",
+#         "Moderate":     "You balance growth with manageable risk.",
+#         "Aggressive":   "You're comfortable with volatility in pursuit of high returns.",
+#     }.get(risk, "")
+
+#     watchlist_line = (
+#         f"👀 *Watchlist:* {context.user_data.get('watchlist')}\n"
+#         if context.user_data.get("watchlist") else ""
+#     )
+
+#     summary = (
+#         "✅ *Your Atlas Profile is Ready!*\n\n"
+#         f"🧭 *Intent:* {context.user_data.get('intent')}\n"
+#         f"📊 *Experience:* {context.user_data.get('experience_level')}\n"
+#         f"⏳ *Horizon:* {context.user_data.get('investment_horizon')}\n"
+#         f"🎯 *Goal:* {context.user_data.get('primary_goal')}\n"
+#         f"🌍 *Markets:* {context.user_data.get('preferred_markets')}\n"
+#         f"⚖️ *Risk Profile:* {risk} — _{risk_desc}_\n"
+#         f"{watchlist_line}\n"
+#         "Type a question or send a stock ticker like `RELIANCE` to get started. "
+#         "Use /profile anytime to see this again."
+#     )
+#     await update.message.reply_text(summary, parse_mode="Markdown")
+#     return ConversationHandler.END
+
+# Curated suggestions — 8 high-interest stocks across sectors
+_WATCHLIST_SUGGESTIONS = [
+    ("RELIANCE", "Energy/Conglomerate"),
+    ("TCS", "IT"),
+    ("HDFCBANK", "Banking"),
+    ("INFY", "IT"),
+    ("TATAMOTORS", "Auto/EV"),
+    ("SUNPHARMA", "Pharma"),
+    ("AAPL", "US Tech"),
+    ("NVDA", "US AI/Chips"),
+]
+
+
+async def ask_watchlist(update: Update, context: ContextTypes.DEFAULT_TYPE, is_message=False):
+    if "watchlist_picks" not in context.user_data:
+        context.user_data["watchlist_picks"] = []
+
+    picks = context.user_data.get("watchlist_picks", [])
+    picked_tickers = [p[0] for p in picks]
+
+    buttons = []
+    row = []
+    for ticker, sector in _WATCHLIST_SUGGESTIONS:
+        prefix = "✅ " if ticker in picked_tickers else ""
+        row.append(InlineKeyboardButton(
+            f"{prefix}{ticker}", callback_data=f"wl_{ticker}"))
+        if len(row) == 2:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+
+    # Action row
+    buttons.append([
+        InlineKeyboardButton("✓ Done with selections",
+                             callback_data="wl_done"),
+        InlineKeyboardButton("⏭ Skip", callback_data="wl_skip"),
+    ])
+
+    count_str = f" ({len(picks)}/5 selected)" if picks else ""
+    text = (
+        f"📈 *Build your watchlist*{count_str}\n\n"
+        "Tap stocks below to add them, *or just type ticker names* "
+        "(e.g. `WIPRO ZOMATO` or `Apple Microsoft`). "
+        "Mix and match — tap + type is fine.\n\n"
+        "_Trending picks across sectors:_"
+    )
+
+    if is_message:
+        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="Markdown")
+    else:
+        try:
+            await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="Markdown")
+        except Exception:
+            await update.callback_query.message.reply_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="Markdown")
+    return ASK_WATCHLIST
+
+
+async def handle_watchlist_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    code = query.data[3:]  # strip "wl_"
+
+    if code == "skip":
+        return await finalize_onboarding(update, context, watchlist=[])
+
+    if code == "done":
+        picks = context.user_data.get("watchlist_picks", [])
+        return await finalize_onboarding(update, context, watchlist=[t for t, _ in picks])
+
+    # Toggle the tapped stock
+    picks = context.user_data.get("watchlist_picks", [])
+    tickers = [t for t, _ in picks]
+
+    sector = next((s for t, s in _WATCHLIST_SUGGESTIONS if t == code), "")
+    if code in tickers:
+        picks = [(t, s) for t, s in picks if t != code]
+    elif len(picks) < 5:
+        picks.append((code, sector))
+    # else: already at 5, silently ignore (could add a toast)
+
+    context.user_data["watchlist_picks"] = picks
+    # Re-render
+    return await ask_watchlist(update, context)  # re-calls edit_message_text
+
+
+async def handle_watchlist_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Smart ticker extraction: calls a lightweight LLM prompt to convert
+    natural language stock mentions into clean NSE/NYSE tickers.
+    Falls back to whitespace split if LLM call fails.
+    """
     raw = update.message.text.strip()
-    if raw.lower() != "skip":
-        tickers = [t.strip().upper() for t in raw.replace(",", " ").split() if t.strip()]
-        context.user_data["watchlist"] = ", ".join(tickers[:5])
+    extracted = await _extract_tickers_from_text(raw)
 
-    telegram_id = str(update.effective_user.id)
-    db = SessionLocal()
+    picks = context.user_data.get("watchlist_picks", [])
+    existing = [t for t, _ in picks]
+    added = []
+
+    for ticker in extracted:
+        if ticker not in existing and len(picks) < 5:
+            picks.append((ticker, ""))
+            added.append(ticker)
+
+    context.user_data["watchlist_picks"] = picks
+
+    if added:
+        await update.message.reply_text(
+            f"✅ Added: *{', '.join(added)}*\n"
+            f"Watchlist so far: *{', '.join([t for t, _ in picks])}*\n\n"
+            "Tap more from the buttons, type more names, or tap *Done* to continue.",
+            parse_mode="Markdown"
+        )
+    else:
+        await update.message.reply_text(
+            "I couldn't identify any stock tickers in that. Try ticker symbols like "
+            "`TCS`, `RELIANCE`, `AAPL` — or tap the suggestions above.",
+            parse_mode="Markdown"
+        )
+
+    return await ask_watchlist(update, context, is_message=True)
+
+
+async def _extract_tickers_from_text(raw: str) -> list[str]:
+    """
+    Uses Gemini with a strict short prompt to extract stock tickers.
+    Falls back to simple uppercase word split if anything fails.
+    """
+    import asyncio
+    from app.config import GEMINI_API_KEY, GEMINI_MODEL
+    from google import genai
+    from google.genai import types as gtypes
+
+    prompt = (
+        f"Extract only the stock ticker symbols from this text: '{raw}'\n"
+        "Rules:\n"
+        "- Return ONLY a comma-separated list of uppercase ticker symbols. Nothing else.\n"
+        "- Convert company names to their NSE/NYSE ticker (Apple→AAPL, Reliance→RELIANCE, "
+        "  Berkshire Hathaway→BRK-B, Infosys→INFY, etc.)\n"
+        "- Ignore non-stock words like 'value', 'investing', 'growth', 'sector', etc.\n"
+        "- If nothing maps to a real stock, return: NONE\n"
+        "Examples:\n"
+        "  'apple berkshire hathaway value investing' → AAPL,BRK-B\n"
+        "  'wipro zomato' → WIPRO,ZOMATO\n"
+        "  'growth stocks only' → NONE\n"
+        f"Input: '{raw}'\nOutput:"
+    )
+
     try:
-        user = get_or_create_user(db, telegram_id)
-        user.intent = context.user_data.get("intent")
-        user.experience_level = context.user_data.get("experience_level")
-        user.investment_horizon = context.user_data.get("investment_horizon")
-        user.primary_goal = context.user_data.get("primary_goal")
-        user.preferred_markets = context.user_data.get("preferred_markets")
-        user.risk_profile = context.user_data.get("risk_profile")
-        if context.user_data.get("watchlist"):
-            user.watchlist = context.user_data["watchlist"]
-        user.onboarded = 1
-        db.commit()
-    finally:
-        db.close()
-
-    risk = context.user_data.get("risk_profile", "")
-    risk_desc = {
-        "Conservative": "You prefer stability and capital preservation.",
-        "Moderate":     "You balance growth with manageable risk.",
-        "Aggressive":   "You're comfortable with volatility in pursuit of high returns.",
-    }.get(risk, "")
-
-    watchlist_line = (
-        f"👀 *Watchlist:* {context.user_data.get('watchlist')}\n"
-        if context.user_data.get("watchlist") else ""
-    )
-
-    summary = (
-        "✅ *Your Atlas Profile is Ready!*\n\n"
-        f"🧭 *Intent:* {context.user_data.get('intent')}\n"
-        f"📊 *Experience:* {context.user_data.get('experience_level')}\n"
-        f"⏳ *Horizon:* {context.user_data.get('investment_horizon')}\n"
-        f"🎯 *Goal:* {context.user_data.get('primary_goal')}\n"
-        f"🌍 *Markets:* {context.user_data.get('preferred_markets')}\n"
-        f"⚖️ *Risk Profile:* {risk} — _{risk_desc}_\n"
-        f"{watchlist_line}\n"
-        "Type a question or send a stock ticker like `RELIANCE` to get started. "
-        "Use /profile anytime to see this again."
-    )
-    await update.message.reply_text(summary, parse_mode="Markdown")
-    return ConversationHandler.END
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        response = await asyncio.to_thread(
+            client.models.generate_content,
+            model=GEMINI_MODEL,
+            contents=prompt,
+            config=gtypes.GenerateContentConfig(
+                temperature=0.0, max_output_tokens=60
+            )
+        )
+        result = response.text.strip().upper()
+        if result == "NONE" or not result:
+            return []
+        tickers = [t.strip() for t in result.split(
+            ",") if t.strip() and len(t.strip()) <= 12]
+        return tickers[:5]
+    except Exception:
+        # Fallback: split on spaces/commas and filter to plausible tickers
+        import re
+        words = re.split(r"[\s,]+", raw.upper())
+        return [w for w in words if 2 <= len(w) <= 8 and w.isalpha()][:5]
 
 
 # ---------------------------------------------------------------------------
@@ -406,7 +644,8 @@ async def profile_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     telegram_id = str(update.effective_user.id)
     db = SessionLocal()
     try:
-        user = get_or_create_user(db, telegram_id, update.effective_user.first_name)
+        user = get_or_create_user(
+            db, telegram_id, update.effective_user.first_name)
         if not user.onboarded:
             await update.effective_message.reply_text(
                 "You haven't completed onboarding yet — send /start to set up your profile."
@@ -437,7 +676,8 @@ onboarding_handler = ConversationHandler(
     states={
         ASK_INTENT: [
             CallbackQueryHandler(handle_intent_button, pattern="^intent_"),
-            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_free_text_intent),
+            MessageHandler(filters.TEXT & ~filters.COMMAND,
+                           handle_free_text_intent),
         ],
         ASK_EXPERIENCE: [
             CallbackQueryHandler(handle_experience_button, pattern="^exp_"),
@@ -449,11 +689,10 @@ onboarding_handler = ConversationHandler(
             CallbackQueryHandler(handle_goal_button, pattern="^goal_"),
         ],
         WAIT_CUSTOM_GOAL: [
-            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_custom_goal),
+            MessageHandler(filters.TEXT & ~filters.COMMAND,
+                           handle_custom_goal),
         ],
-        ASK_MARKETS: [
-            CallbackQueryHandler(handle_markets_button, pattern="^market_"),
-        ],
+        ASK_MARKETS: [CallbackQueryHandler(handle_market_toggle, pattern='^mkt_')],
         ASK_RISK_Q1: [
             CallbackQueryHandler(handle_risk_q1, pattern="^rq1_"),
         ],
@@ -464,7 +703,9 @@ onboarding_handler = ConversationHandler(
             CallbackQueryHandler(handle_risk_q3, pattern="^rq3_"),
         ],
         ASK_WATCHLIST: [
-            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_watchlist),
+            CallbackQueryHandler(handle_watchlist_button, pattern='^wl_'),
+            MessageHandler(filters.TEXT & ~filters.COMMAND,
+                           handle_watchlist_text),
         ],
     },
     fallbacks=[CommandHandler("start", start_onboarding)],

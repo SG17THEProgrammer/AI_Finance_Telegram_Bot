@@ -253,6 +253,11 @@ def _alert_condition_met(alert, price: float, rsi) -> bool:
         return rsi is not None and rsi <= target
     if alert.alert_type == "RSI_OVERBOUGHT":
         return rsi is not None and rsi >= target
+    elif alert.alert_type == "TRAILING_DAYS":
+        triggered = _check_trailing_days_alert(alert, price_histories)
+
+    elif alert.alert_type == "LAGGED_PERCENT_DROP":
+        triggered = _check_lagged_percent_alert(alert, price_histories)
     return False
 
 
@@ -331,3 +336,223 @@ def format_trigger_message(event: dict) -> str:
     if alert_type == "RSI_OVERBOUGHT":
         return f"📈 *{ticker}* is now technically overbought (RSI {event['rsi']:.1f})."
     return f"🚨 Alert triggered for *{ticker}*."
+
+import json as _json
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
+
+_IST = ZoneInfo("Asia/Kolkata")
+
+# ── Daily baseline reset ───────────────────────────────────────────────────────
+
+def reset_daily_baselines(db) -> int:
+    """
+    Called once at market open (9:16 AM IST by scheduler).
+    For every active PERCENT_DROP/GAIN alert on an index (is_recurring=1),
+    fetch today's open price and update baseline_price + baseline_date.
+    This is what makes "alert me if Nifty drops 0.5% today" work correctly
+    every day — without this, the baseline stays at creation-time price forever.
+    Returns count of alerts reset.
+    """
+    from app.database.db import Alert
+    today_str = datetime.now(_IST).strftime("%Y-%m-%d")
+
+    candidates = db.query(Alert).filter(
+        Alert.is_active == 1,
+        Alert.is_recurring == 1,
+        Alert.alert_type.in_(["PERCENT_DROP", "PERCENT_GAIN"]),
+        Alert.baseline_date != today_str,  # only reset if not already done today
+    ).all()
+
+    reset_count = 0
+    seen_tickers = {}
+
+    for alert in candidates:
+        ticker = alert.ticker
+        if ticker not in seen_tickers:
+            price = _get_current_price(ticker)
+            seen_tickers[ticker] = price
+        price = seen_tickers[ticker]
+        if price:
+            alert.baseline_price = str(price)
+            alert.baseline_date = today_str
+            reset_count += 1
+
+    if reset_count:
+        db.commit()
+
+    return reset_count
+
+
+# ── Complex alert: TRAILING_DAYS ───────────────────────────────────────────────
+
+def create_trailing_days_alert(db, telegram_id: str, ticker: str,
+                                direction: str, trigger_days: int,
+                                window_days: int) -> dict:
+    """
+    Alert fires when a ticker has been negative (or positive) for
+    `trigger_days` out of the last `window_days` trading days.
+
+    Example: "Alert me when Nifty trails for 5 out of 8 days"
+    → direction='down', trigger_days=5, window_days=8
+
+    Stored as alert_type='TRAILING_DAYS' with extra_config JSON.
+    Checked every 15 min by check_active_alerts (only meaningful at EOD
+    but harmless to check more often since it uses daily close data).
+    """
+    from app.database.db import Alert
+
+    resolved = _INDEX_ALIASES.get(ticker.upper(), ticker.upper())
+    hist = _get_price_history(resolved, days=window_days + 5)
+
+    if hist is None or len(hist) < window_days:
+        return {"error": f"Not enough history for '{ticker}' to set up a trailing alert."}
+
+    config = _json.dumps({
+        "direction": direction.lower(),   # "up" or "down"
+        "trigger_days": trigger_days,
+        "window_days": window_days,
+    })
+
+    alert = Alert(
+        telegram_id=str(telegram_id),
+        ticker=resolved,
+        alert_type="TRAILING_DAYS",
+        target_value=f"{trigger_days}/{window_days}",
+        baseline_price=None,
+        baseline_date=None,
+        is_recurring=1,
+        armed=1,
+        is_active=1,
+        extra_config=config,
+    )
+    db.add(alert)
+    db.commit()
+
+    return {
+        "created": True,
+        "alert_type": "TRAILING_DAYS",
+        "ticker": ticker,
+        "description": (
+            f"I'll alert you when {ticker} closes {'down' if direction == 'down' else 'up'} "
+            f"for {trigger_days} or more days out of the last {window_days} trading days. "
+            "This is checked using daily closing prices."
+        ),
+    }
+
+
+def _check_trailing_days_alert(alert, price_histories: dict) -> bool:
+    """Returns True if the trailing condition is met."""
+    config = _json.loads(alert.extra_config or "{}")
+    direction = config.get("direction", "down")
+    trigger_days = int(config.get("trigger_days", 5))
+    window_days = int(config.get("window_days", 8))
+
+    hist = price_histories.get(alert.ticker)
+    if hist is None or len(hist) < window_days:
+        return False
+
+    closes = hist['Close'].dropna().tail(window_days)
+    daily_returns = closes.pct_change().dropna()
+
+    if direction == "down":
+        count = int((daily_returns < 0).sum())
+    else:
+        count = int((daily_returns > 0).sum())
+
+    return count >= trigger_days
+
+
+# ── Complex alert: LAGGED_PERCENT_DROP ────────────────────────────────────────
+_INDEX_ALIASES = {
+    "NIFTY50": "^NSEI",
+    "NIFTY 50": "^NSEI",
+    "NIFTY": "^NSEI",
+    "BANKNIFTY": "^NSEBANK",
+    "SENSEX": "^BSESN",
+    "NASDAQ100": "^NDX",
+    "NASDAQ": "^IXIC",
+}
+def create_lagged_percent_alert(db, telegram_id: str, ticker: str,
+                                 drop_pct: float, lag_days: int) -> dict:
+    """
+    Alert fires when ticker drops `drop_pct`% over a `lag_days` window
+    (comparing today's price to the price `lag_days` trading days ago).
+
+    Example: "Alert when Nifty drops 1-2% over 5 or 10 days"
+    → drop_pct=1.5, lag_days=5
+
+    Stored as LAGGED_PERCENT_DROP. Checked every 15 min by scheduler.
+    """
+    from app.database.db import Alert
+
+    resolved = _INDEX_ALIASES.get(ticker.upper(), ticker.upper())
+
+    config = _json.dumps({
+        "drop_pct": float(drop_pct),
+        "lag_days": int(lag_days),
+    })
+
+    alert = Alert(
+        telegram_id=str(telegram_id),
+        ticker=resolved,
+        alert_type="LAGGED_PERCENT_DROP",
+        target_value=f"{drop_pct}%/{lag_days}d",
+        baseline_price=None,
+        baseline_date=None,
+        is_recurring=1,
+        armed=1,
+        is_active=1,
+        extra_config=config,
+    )
+    db.add(alert)
+    db.commit()
+
+    return {
+        "created": True,
+        "alert_type": "LAGGED_PERCENT_DROP",
+        "ticker": ticker,
+        "description": (
+            f"I'll alert you when {ticker} drops more than {drop_pct}% "
+            f"compared to its price {lag_days} trading days ago. "
+            "This resets automatically — it's a rolling window check."
+        ),
+    }
+
+
+def _check_lagged_percent_alert(alert, price_histories: dict) -> bool:
+    """Returns True if the lagged drop condition is met."""
+    config = _json.loads(alert.extra_config or "{}")
+    drop_pct = float(config.get("drop_pct", 1.0))
+    lag_days = int(config.get("lag_days", 5))
+
+    hist = price_histories.get(alert.ticker)
+    if hist is None or len(hist) < lag_days + 1:
+        return False
+
+    closes = hist['Close'].dropna()
+    if len(closes) < lag_days + 1:
+        return False
+
+    current = float(closes.iloc[-1])
+    past = float(closes.iloc[-(lag_days + 1)])
+    if past == 0:
+        return False
+
+    actual_drop = ((past - current) / past) * 100
+    return actual_drop >= drop_pct
+
+
+# ── Helper: fetch N days of price history ────────────────────────────────────
+
+def _get_price_history(ticker: str, days: int = 20):
+    """Fetch `days` calendar days of history for the complex alert checkers."""
+    import yfinance as yf
+    period = f"{days + 10}d"  # buffer for weekends/holidays
+    try:
+        hist = yf.Ticker(ticker).history(period=period)
+        if hist.empty and not ticker.startswith("^"):
+            hist = yf.Ticker(f"{ticker}.NS").history(period=period)
+        return hist if not hist.empty else None
+    except Exception:
+        return None

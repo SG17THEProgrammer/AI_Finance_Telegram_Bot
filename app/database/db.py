@@ -52,6 +52,7 @@ class Alert(Base):
     armed = Column(Integer, default=1)                # 1 = ready to fire; 0 = already fired, waiting to re-arm (recurring alerts only)
     is_active = Column(Integer, default=1)           # 1 for active, 0 for triggered/disabled (one-shot alerts only - recurring alerts stay 1 until user deletes them)
     triggered_at = Column(DateTime, nullable=True)    # last time this alert fired (recurring alerts update this each time, not just once)
+    extra_config = Column(Text, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 # -----------------------
 
