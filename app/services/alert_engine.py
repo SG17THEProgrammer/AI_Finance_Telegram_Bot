@@ -542,3 +542,23 @@ def re_arm_rsi_alerts(db) -> int:
     if re_armed:
         db.commit()
     return re_armed
+
+def list_alerts(db, telegram_id: str) -> list:
+    """Returns all active alerts for a user. Used by the list_market_alerts tool."""
+    from app.database.db import Alert
+    alerts = db.query(Alert).filter(
+        Alert.telegram_id == str(telegram_id),
+        Alert.is_active == 1,
+    ).order_by(Alert.created_at.desc()).all()
+    return [
+        {
+            "id": a.id,
+            "ticker": a.ticker,
+            "alert_type": a.alert_type,
+            "target_value": a.target_value,
+            "is_recurring": bool(a.is_recurring),
+            "baseline_price": a.baseline_price,
+            "created_at": str(a.created_at),
+        }
+        for a in alerts
+    ]

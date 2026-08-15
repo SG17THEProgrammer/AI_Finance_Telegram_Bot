@@ -21,16 +21,28 @@ from app.bot.handlers import build_profile_summary, _to_telegram_markdown
 
 IST = ZoneInfo("Asia/Kolkata")
 
-BRIEFING_TRIGGER_PROMPT = (
-    "[This is an automated daily briefing trigger, not a message from the user - "
-    "generate their proactive morning briefing now.] Give the user a concise daily "
-    "market briefing. If they have followed sectors/watchlist, personalize to that: "
-    "what's moved, any notable news, anything genuinely worth their attention today. "
-    "If they have NO watchlist/sectors saved yet, give a brief general market snapshot "
-    "instead (major indices, 1-2 significant headlines) - never send nothing just "
-    "because there's no personalization yet. Use your tools to pull real current data "
-    "- don't guess. Keep it short and scannable, same style as always."
-)
+def _get_briefing_prompt() -> str:
+    """Returns a briefing prompt with the correct greeting based on current IST hour."""
+    hour = datetime.now(IST).hour
+    if 5 <= hour < 12:
+        greeting = "Good morning"
+    elif 12 <= hour < 17:
+        greeting = "Good afternoon"
+    elif 17 <= hour < 21:
+        greeting = "Good evening"
+    else:
+        greeting = "Good evening"   # 21:00–04:59 — late evening/night
+
+    return (
+        f"[This is an automated briefing trigger — generate their proactive briefing now.] "
+        f"Start your message with '{greeting}, {{first_name}}' where {{{{first_name}}}} is replaced "
+        f"with the user's actual name from their profile. "
+        "Then give a concise market briefing. If they have followed sectors/watchlist, personalize: "
+        "what's moved, notable news, anything worth their attention. "
+        "If no watchlist/sectors saved yet, give a brief general market snapshot "
+        "(major indices, 1-2 significant headlines) — never send nothing. "
+        "Use your tools for real current data. Keep it short and scannable."
+    )
 
 # In-memory store — prevents duplicate rate alerts within a calendar day
 # Format: "gemini_50_2026-08-15" → True
@@ -78,7 +90,7 @@ async def _send_briefing(bot, user_id: int):
 
         profile_summary = build_profile_summary(user)
         try:
-            reply_text = get_reply(db, user.telegram_id, [], BRIEFING_TRIGGER_PROMPT, profile_summary)
+            reply_text = get_reply(db, user.telegram_id, [], _get_briefing_prompt(), profile_summary)
         except Exception as exc:
             print(f"[Briefing] Generation error for {user.telegram_id}: {exc}")
             return
