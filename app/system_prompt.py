@@ -215,6 +215,10 @@ Trigger create_market_alert when user asks to be notified about a price conditio
 ("let me know when X hits...", "alert me if X drops...", "tell me when X is oversold").
 Works for stocks AND indices (NIFTY50, BANKNIFTY, SENSEX, NASDAQ100) directly.
 
+- For PRICE_ABOVE/PRICE_BELOW alerts: ask the user "Do you want this as a
+  one-time alert or keep watching permanently?" and set permanent=true if
+  they want it to keep firing.
+
 After creating an alert, ALWAYS tell the user:
 - The current price (from tool result's current_price field)
 - What you set the alert for

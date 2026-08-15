@@ -28,6 +28,7 @@ class User(Base):
     investment_horizon = Column(String, nullable=True) # < 1 year, 1-3 years, 5+ years
     risk_profile = Column(String, nullable=True)       # Conservative, Moderate, Aggressive
     primary_goal = Column(String, nullable=True)       # Wealth creation, Car buy, Retirement
+    preferred_markets = Column(String, nullable=True)  # comma-separated e.g. "Indian Stocks, ETFs"
     # -----------------------------
 
     pending_transcript = Column(Text, nullable=True)  

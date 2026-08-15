@@ -69,8 +69,12 @@ def build_profile_summary(user) -> str:
         parts.append(f"Intent: {user.intent}.")
     if user.experience_level:
         parts.append(f"Experience: {user.experience_level}.")
+    if user.investment_horizon:
+        parts.append(f"Investment horizon: {user.investment_horizon}.")
     if user.primary_goal:
         parts.append(f"Goal: {user.primary_goal}.")
+    if user.preferred_markets:                                      # ADD THIS
+        parts.append(f"Preferred markets: {user.preferred_markets}.")  # ADD THIS
         
     risk = user.risk_profile
     if risk:

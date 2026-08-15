@@ -121,7 +121,8 @@ def get_price_and_rsi(ticker: str) -> dict:
     return {"error": f"Could not fetch market data for '{ticker}'."}
 
 
-def create_alert(db, telegram_id: str, ticker: str, alert_type: str, target_value: str) -> dict:
+def create_alert(db, telegram_id: str, ticker: str, alert_type: str, target_value: str, permanent: bool = False) -> dict:
+
     from app.database.db import Alert
 
     alert_type = alert_type.strip().upper()
@@ -136,6 +137,10 @@ def create_alert(db, telegram_id: str, ticker: str, alert_type: str, target_valu
     ticker_clean = ticker.strip().upper()
     is_index = _is_index(ticker_clean)
     is_recurring = alert_type in RSI_TYPES or (alert_type in PERCENT_TYPES and is_index)
+
+    # Allow user to explicitly request a permanent/recurring watch for any type
+    if str(permanent).lower() in ("true", "1", "yes"):
+        is_recurring = True
 
     # Always fetch current price — needed as baseline for PERCENT alerts,
     # and returned to the LLM so it can tell the user the current level

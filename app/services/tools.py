@@ -296,6 +296,14 @@ TOOLS = [
                             "specify), '70' for RSI overbought (default 70 if unspecified)."
                         ),
                     },
+                    "permanent": {
+                        "type": "boolean",
+                        "description": (
+                            "If true, the alert keeps watching even after it fires — "
+                            "set this when the user asks for a 'permanent' or 'standing' "
+                            "or 'recurring' watch. Default false (one-time)."
+                        ),
+                    },
                 },
                 "required": ["ticker", "alert_type", "target_value"],
             },
@@ -426,6 +434,7 @@ def execute_tool_call(db, telegram_id: str, tool_name: str, arguments: dict) -> 
             arguments.get("ticker", ""),
             arguments.get("alert_type", ""),
             arguments.get("target_value", ""),
+            arguments.get("permanent", False),
         ))
 
     if tool_name == "list_market_alerts":
