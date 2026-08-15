@@ -5,7 +5,7 @@ Briefings: runs a check every minute; any onboarded user whose briefing_time
 (HH:MM, IST) matches the current time - and who hasn't already gotten today's
 briefing - gets a proactive message sent to them, unprompted.
 
-Alerts: runs every 10 minutes, evaluates every active Alert row against live
+Alerts: runs every 15 minutes, evaluates every active Alert row against live
 market data (app/services/alert_engine.py) and pushes a Telegram message for
 anything that triggered. Same invite-only access-control gate as briefings -
 a triggered alert is never pushed to a user who isn't on the allowlist.
@@ -123,5 +123,5 @@ def start_scheduler(bot):
     scheduler.add_job(_check_and_send_briefings, "interval", minutes=1, args=[bot])
     scheduler.add_job(_check_and_send_alerts, "interval", minutes=10, args=[bot])
     scheduler.start()
-    print("[Scheduler] Daily briefing check (1 min) and alert check (10 min) started, IST.")
+    print("[Scheduler] Daily briefing check (1 min) and alert check (15 min) started, IST.")
     return scheduler

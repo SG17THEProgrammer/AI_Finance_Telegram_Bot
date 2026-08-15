@@ -323,10 +323,9 @@ TOOLS = [
             "name": "generate_sector_heatmap",
             "description": (
                 "Generates a color-coded sector heatmap showing today's percentage performance "
-                "across key Indian sectors (IT, Banking, Auto, Pharma, FMCG, Energy, Metals, Infra) "
-                "and major indices (Nifty50, BankNifty, S&P500, Nasdaq). Call this when the user asks "
-                "for a market overview, 'what sectors are up today', 'market heatmap', or "
-                "'how are different sectors doing'. No ticker needed."
+                "across key Indian sectors and major indices. Also returns yesterday's data for "
+                "comparison. Call this when the user asks for a market overview, sector performance, "
+                "'what sectors are up today', 'compare today vs yesterday', or 'market heatmap'."
             ),
             "parameters": {
                 "type": "object",
@@ -510,7 +509,7 @@ def execute_tool_call(db, telegram_id: str, tool_name: str, arguments: dict) -> 
     if tool_name == "generate_stock_chart":
         from app.services.financial_data import generate_stock_chart
         return json.dumps(generate_stock_chart(
-            arguments.get("query", ""), 
+            arguments.get("query", ""),
             telegram_id,
             arguments.get("chart_type", "line"),
             arguments.get("period", "3mo")
@@ -519,7 +518,7 @@ def execute_tool_call(db, telegram_id: str, tool_name: str, arguments: dict) -> 
     if tool_name == "generate_comparison_chart":
         from app.services.financial_data import generate_comparison_chart
         return json.dumps(generate_comparison_chart(
-            arguments.get("queries", []), 
+            arguments.get("queries", []),
             telegram_id,
             arguments.get("period", "6mo")
         ))

@@ -198,7 +198,7 @@ You now have 7 chart tools. Use them proactively when a visual would add value:
 - generate_stock_chart / generate_comparison_chart: Already existing. Use for basic price history or multi-stock comparison.
 - generate_candlestick_ma_chart: When the user asks about trend direction, MA crossovers, technical analysis of a single stock.
 - generate_rsi_chart: When the user asks about RSI, overbought/oversold, or wants to know if a stock is in buying territory. ALSO call this automatically when an RSI alert fires.
-- generate_sector_heatmap: When user asks for a market overview, sector performance, or "what's moving today". No ticker needed.
+- generate_sector_heatmap: Market overview or sector comparison (today vs yesterday). The tool returns both days' data — use the 'comparison' field in the result to answer "how did today compare to yesterday".
 - generate_fundamental_radar: When user asks if a stock is cheap/expensive, undervalued, or wants a valuation comparison.
 - generate_support_resistance_chart: When user asks where to buy, key price levels, support/resistance zones.
 
