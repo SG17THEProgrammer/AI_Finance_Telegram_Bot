@@ -1,415 +1,218 @@
 """
-Threshold alert engine.
+app/services/alert_engine.py
 
-Responsible for:
-  - creating alerts (with a price snapshot for percent-based alerts)
-  - evaluating active alerts against live market data
-  - returning trigger events for the scheduler to push as Telegram messages
+Alert engine for Atlas. Handles:
+  - Simple alerts: PRICE_ABOVE, PRICE_BELOW, PERCENT_DROP, PERCENT_GAIN,
+                   RSI_OVERSOLD, RSI_OVERBOUGHT
+  - Complex alerts: TRAILING_DAYS, LAGGED_PERCENT_DROP
+  - Daily baseline reset for recurring index PERCENT_DROP/GAIN alerts
 
-Hard rule, same as financial_data.py: never fabricate a price or RSI value.
-If a symbol can't be resolved or yfinance returns nothing usable, the alert
-is simply skipped this cycle (not silently marked triggered) and logged.
-
-Index alerts (Nifty 50, Nasdaq 100, Sensex, Bank Nifty) are NOT a separate
-alert_type - they reuse PERCENT_DROP/PERCENT_GAIN, just with the ticker
-resolved to its yfinance index symbol (e.g. "NIFTY50" -> "^NSEI") instead of
-an equity symbol. This keeps the schema and evaluation logic in one place
-rather than duplicating it for "stock" vs "index".
+FIX: `period="30d"` used everywhere so trailing/lagged alerts have enough history.
+FIX: `_get_current_price` and `price_histories` are now properly defined.
+FIX: `reset_daily_baselines()` added — called by scheduler at 9:16 AM IST.
 """
 
-import logging
+import json
+import numpy as np
 import yfinance as yf
-import pandas as pd
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
-from app.services.financial_data import _normalize_symbol
+_IST = ZoneInfo("Asia/Kolkata")
 
-logging.getLogger("yfinance").setLevel(logging.CRITICAL)
-
-VALID_ALERT_TYPES = {
-    "PRICE_ABOVE",
-    "PRICE_BELOW",
-    "PERCENT_DROP",
-    "PERCENT_GAIN",
-    "RSI_OVERSOLD",
-    "RSI_OVERBOUGHT",
-}
-
-# Index aliases resolve to their yfinance ticker symbols. Not exhaustive -
-# covers the ones mentioned in the brainstorming notes (Nifty 50, Nasdaq 100)
-# plus the other two obvious Indian benchmarks.
-INDEX_ALIASES = {
-    "NIFTY": "^NSEI",
-    "NIFTY50": "^NSEI",
-    "NIFTY 50": "^NSEI",
-    "BANKNIFTY": "^NSEBANK",
+# ── Index ticker aliases ───────────────────────────────────────────────────────
+_INDEX_ALIASES = {
+    "NIFTY50":    "^NSEI",
+    "NIFTY 50":   "^NSEI",
+    "NIFTY":      "^NSEI",
+    "BANKNIFTY":  "^NSEBANK",
     "BANK NIFTY": "^NSEBANK",
-    "SENSEX": "^BSESN",
-    "NASDAQ": "^NDX",
-    "NASDAQ100": "^NDX",
+    "SENSEX":     "^BSESN",
+    "NASDAQ100":  "^NDX",
     "NASDAQ 100": "^NDX",
+    "NASDAQ":     "^IXIC",
+    "SP500":      "^GSPC",
+    "S&P500":     "^GSPC",
 }
 
-PERCENT_TYPES = {"PERCENT_DROP", "PERCENT_GAIN"}
-RSI_TYPES = {"RSI_OVERSOLD", "RSI_OVERBOUGHT"}
+
+def _resolve_ticker(raw: str) -> str:
+    """Resolves user-friendly names to yfinance-compatible symbols."""
+    upper = raw.strip().upper()
+    return _INDEX_ALIASES.get(upper, upper)
 
 
-def _is_index(ticker: str) -> bool:
-    """True when the alert ticker maps to a yfinance index symbol."""
-    key = ticker.strip().upper()
-    return key in INDEX_ALIASES or _resolve_symbol(key).startswith("^")
+# ── Price fetch helpers ────────────────────────────────────────────────────────
 
-
-def _today_ist_str() -> str:
-    """Return today's date in ISO format for IST timezone."""
-    from datetime import datetime
-    from zoneinfo import ZoneInfo
-
-    return datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d")
-
-
-def _resolve_symbol(ticker: str) -> str:
-    """Returns the actual yfinance-fetchable symbol for a user-given ticker,
-    checking index aliases first, then falling back to the equity alias map."""
-    key = ticker.strip().upper()
-    if key in INDEX_ALIASES:
-        return INDEX_ALIASES[key]
-    return _normalize_symbol(ticker)
-
-
-def _compute_rsi(close_series: pd.Series, period: int = 14):
-    """Standard 14-period RSI off a closing-price series. Returns None if
-    there isn't enough history to compute it (never guesses a value)."""
-    if len(close_series) < period + 1:
-        return None
-    delta = close_series.diff()
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
-    avg_gain = gain.rolling(window=period).mean()
-    avg_loss = loss.rolling(window=period).mean()
-    last_avg_gain = avg_gain.iloc[-1]
-    last_avg_loss = avg_loss.iloc[-1]
-    if last_avg_loss == 0:
-        return 100.0
-    rs = last_avg_gain / last_avg_loss
-    return round(100 - (100 / (1 + rs)), 2)
-
-
-def get_price_and_rsi(ticker: str) -> dict:
+def _get_current_price(ticker: str) -> float | None:
     """
-    Single-call fetch of current price + RSI-14 for a symbol. Tries the
-    resolved symbol as-is (covers indices and US tickers), then NSE/BSE
-    suffixes for Indian equities - same fallback order as financial_data.py.
-    Returns {"error": ...} if nothing could be fetched anywhere.
+    Fetches the latest available price for a ticker.
+    Tries the symbol as-is first (handles ^NSEI, ^GSPC indices),
+    then falls back to .NS and .BO for Indian equities.
+    Returns None on failure — callers must handle this gracefully.
     """
-    symbol = _resolve_symbol(ticker)
-    candidates = [symbol] if symbol.startswith("^") else [symbol, f"{symbol}.NS", f"{symbol}.BO"]
+    candidates = [ticker]
+    if not ticker.startswith("^"):
+        candidates += [f"{ticker}.NS", f"{ticker}.BO"]
 
     for candidate in candidates:
         try:
-            hist = yf.Ticker(candidate).history(period="2mo", interval="1d")
+            t = yf.Ticker(candidate)
+            hist = t.history(period="2d")
+            if not hist.empty:
+                return float(hist["Close"].iloc[-1])
         except Exception:
             continue
-        if hist.empty or "Close" not in hist:
+    return None
+
+
+def _get_price_history(ticker: str, days: int = 30):
+    """
+    Fetches `days` calendar days of OHLCV history.
+    Uses period="30d" by default so trailing/lagged alerts have enough data.
+    Returns DataFrame or None.
+    """
+    period = f"{days}d"
+    candidates = [ticker]
+    if not ticker.startswith("^"):
+        candidates += [f"{ticker}.NS", f"{ticker}.BO"]
+
+    for candidate in candidates:
+        try:
+            hist = yf.Ticker(candidate).history(period=period)
+            if not hist.empty:
+                return hist
+        except Exception:
             continue
-        close = hist["Close"].dropna()
-        if close.empty:
-            continue
-        price = round(float(close.iloc[-1]), 2)
-        rsi = _compute_rsi(close)
-        return {"symbol": candidate, "price": price, "rsi": rsi}
-
-    return {"error": f"Could not fetch market data for '{ticker}'."}
+    return None
 
 
-def create_alert(db, telegram_id: str, ticker: str, alert_type: str, target_value: str, permanent: bool = False) -> dict:
+def _compute_rsi(close, period: int = 14):
+    """Wilder's RSI-14."""
+    delta = close.diff()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+    avg_gain = gain.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
+    avg_loss = loss.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
+    rs = avg_gain / avg_loss.replace(0, np.nan)
+    return 100 - (100 / (1 + rs))
 
+
+# ── Alert creation ─────────────────────────────────────────────────────────────
+
+def create_alert(db, telegram_id: str, ticker: str, alert_type: str,
+                 target_value: str, permanent: bool = False) -> dict:
+    """
+    Creates a simple alert (PRICE_ABOVE, PRICE_BELOW, PERCENT_DROP, PERCENT_GAIN,
+    RSI_OVERSOLD, RSI_OVERBOUGHT).
+
+    Key behaviour:
+    - Fetches current price at creation time — returned in the response so the
+      LLM can tell the user "baseline is X".
+    - If condition is already met → returns already_met=True, no alert created.
+    - Index PERCENT_DROP/GAIN alerts are recurring by default (baseline resets daily).
+    - permanent=True forces is_recurring=1 on any alert type.
+    """
     from app.database.db import Alert
 
-    alert_type = alert_type.strip().upper()
-    if alert_type not in VALID_ALERT_TYPES:
-        return {"error": f"Unknown alert type '{alert_type}'. Must be one of: {', '.join(sorted(VALID_ALERT_TYPES))}"}
+    resolved = _resolve_ticker(ticker)
+    current_price = _get_current_price(resolved)
 
+    if current_price is None:
+        return {"error": f"Could not fetch current price for '{ticker}'. Check the ticker and try again."}
+
+    today_str = datetime.now(_IST).strftime("%Y-%m-%d")
+
+    # Determine if this should be a recurring alert
+    is_index = resolved.startswith("^")
+    is_pct_type = alert_type in ("PERCENT_DROP", "PERCENT_GAIN")
+    is_recurring = 1 if (permanent or (is_index and is_pct_type)) else 0
+
+    # Check if already met — don't create a useless alert
+    already_met = False
     try:
-        target_num = float(str(target_value).replace("%", "").strip())
-    except ValueError:
-        return {"error": f"target_value must be numeric, got '{target_value}'."}
+        target = float(target_value.replace("%", ""))
+        if alert_type == "PRICE_BELOW" and current_price <= target:
+            already_met = True
+        elif alert_type == "PRICE_ABOVE" and current_price >= target:
+            already_met = True
+        elif alert_type == "PERCENT_DROP":
+            # Can't be already-met at creation since baseline = current
+            pass
+        elif alert_type == "RSI_OVERSOLD":
+            hist = _get_price_history(resolved, days=30)
+            if hist is not None:
+                rsi = _compute_rsi(hist["Close"].dropna())
+                if not rsi.empty and float(rsi.iloc[-1]) <= target:
+                    already_met = True
+        elif alert_type == "RSI_OVERBOUGHT":
+            hist = _get_price_history(resolved, days=30)
+            if hist is not None:
+                rsi = _compute_rsi(hist["Close"].dropna())
+                if not rsi.empty and float(rsi.iloc[-1]) >= target:
+                    already_met = True
+    except Exception:
+        pass
 
-    ticker_clean = ticker.strip().upper()
-    is_index = _is_index(ticker_clean)
-    is_recurring = alert_type in RSI_TYPES or (alert_type in PERCENT_TYPES and is_index)
-
-    # Allow user to explicitly request a permanent/recurring watch for any type
-    if str(permanent).lower() in ("true", "1", "yes"):
-        is_recurring = True
-
-    # Always fetch current price — needed as baseline for PERCENT alerts,
-    # and returned to the LLM so it can tell the user the current level
-    # regardless of alert type (PRICE_BELOW at 1350 when price is 1310 is
-    # a meaningful signal the user should see, not silently skip).
-    quote = get_price_and_rsi(ticker)
-    if "error" in quote:
-        return quote
-
-    current_price = quote["price"]
-    current_rsi = quote.get("rsi")
-
-    # Check if the condition is already met right now — creating an alert
-    # that would fire instantly (or in the next 10-min cycle) with no real
-    # watch period is almost never what the user meant. Return a clear flag
-    # so the LLM can inform them rather than silently setting a useless alert.
-    instant_trigger = False
-    if alert_type == "PRICE_BELOW" and current_price <= target_num:
-        instant_trigger = True
-    elif alert_type == "PRICE_ABOVE" and current_price >= target_num:
-        instant_trigger = True
-    elif alert_type == "RSI_OVERSOLD" and current_rsi is not None and current_rsi <= target_num:
-        instant_trigger = True
-    elif alert_type == "RSI_OVERBOUGHT" and current_rsi is not None and current_rsi >= target_num:
-        instant_trigger = True
-
-    if instant_trigger:
+    if already_met:
         return {
             "already_met": True,
-            "ticker": ticker_clean,
-            "alert_type": alert_type,
-            "target_value": target_num,
             "current_price": current_price,
-            "current_rsi": current_rsi,
+            "message": (
+                f"The condition is already met right now (current price: {current_price:.2f}). "
+                "Please set a different target."
+            ),
         }
 
-    # Condition is not yet met — safe to create the alert
-    baseline_price = None
-    baseline_date = None
-    if alert_type in PERCENT_TYPES:
-        baseline_price = current_price
-        baseline_date = _today_ist_str()
-
     alert = Alert(
-        telegram_id=telegram_id,
-        ticker=ticker_clean,
+        telegram_id=str(telegram_id),
+        ticker=resolved,
         alert_type=alert_type,
-        target_value=str(target_num),
-        baseline_price=baseline_price,
-        baseline_date=baseline_date,
-        is_recurring=1 if is_recurring else 0,
+        target_value=str(target_value),
+        baseline_price=str(current_price),
+        baseline_date=today_str,
+        is_recurring=is_recurring,
         armed=1,
         is_active=1,
     )
     db.add(alert)
     db.commit()
-    db.refresh(alert)
+
+    recurring_note = ""
+    if is_recurring and is_pct_type:
+        recurring_note = " The baseline resets daily at market open, so this always measures today's movement."
 
     return {
-        "success": True,
-        "alert_id": alert.id,
-        "ticker": alert.ticker,
+        "created": True,
         "alert_type": alert_type,
-        "target_value": target_num,
+        "ticker": ticker,
+        "target": target_value,
         "current_price": current_price,
-        "current_rsi": current_rsi,
-        "baseline_price": baseline_price,
-        "is_recurring": is_recurring,
+        "is_recurring": bool(is_recurring),
+        "note": recurring_note,
     }
 
-
-def list_alerts(db, telegram_id: str, active_only: bool = True) -> list:
-    from app.database.db import Alert
-
-    q = db.query(Alert).filter(Alert.telegram_id == telegram_id)
-    if active_only:
-        q = q.filter(Alert.is_active == 1)
-    return q.order_by(Alert.created_at.desc()).all()
-
-
-def delete_alert(db, telegram_id: str, alert_id: int) -> dict:
-    from app.database.db import Alert
-
-    alert = db.query(Alert).filter(Alert.id == alert_id, Alert.telegram_id == telegram_id).first()
-    if not alert:
-        return {"error": "Alert not found."}
-    db.delete(alert)
-    db.commit()
-    return {"success": True}
-
-
-def _alert_condition_met(alert, price: float, rsi) -> bool:
-    target = float(alert.target_value)
-
-    if alert.alert_type == "PRICE_ABOVE":
-        return price >= target
-    if alert.alert_type == "PRICE_BELOW":
-        return price <= target
-    if alert.alert_type == "PERCENT_DROP":
-        if not alert.baseline_price:
-            return False
-        pct_change = (price - alert.baseline_price) / alert.baseline_price * 100
-        return pct_change <= -target
-    if alert.alert_type == "PERCENT_GAIN":
-        if not alert.baseline_price:
-            return False
-        pct_change = (price - alert.baseline_price) / alert.baseline_price * 100
-        return pct_change >= target
-    if alert.alert_type == "RSI_OVERSOLD":
-        return rsi is not None and rsi <= target
-    if alert.alert_type == "RSI_OVERBOUGHT":
-        return rsi is not None and rsi >= target
-    elif alert.alert_type == "TRAILING_DAYS":
-        triggered = _check_trailing_days_alert(alert, price_histories)
-
-    elif alert.alert_type == "LAGGED_PERCENT_DROP":
-        triggered = _check_lagged_percent_alert(alert, price_histories)
-    return False
-
-
-def check_active_alerts(db) -> list:
-    """
-    Evaluates every active alert against live data. Returns a list of dicts
-    for alerts that triggered this cycle - the caller (scheduler) is
-    responsible for sending the Telegram message and this function marks
-    the alert inactive + stamps triggered_at so it fires once, not every
-    cycle. Alerts whose ticker can't be fetched this cycle are left active
-    and simply skipped - a transient data-source hiccup should never
-    silently disable a user's alert.
-    """
-    from datetime import datetime, timezone
-    from app.database.db import Alert
-
-    triggered = []
-    active_alerts = db.query(Alert).filter(Alert.is_active == 1).all()
-
-    # Group by ticker so we only fetch each symbol once per cycle, even if
-    # multiple users/alerts watch the same stock or index.
-    tickers = {a.ticker for a in active_alerts}
-    quotes = {}
-    for ticker in tickers:
-        quotes[ticker] = get_price_and_rsi(ticker)
-
-    for alert in active_alerts:
-        quote = quotes.get(alert.ticker, {})
-        if "error" in quote:
-            continue
-
-        price = quote["price"]
-        rsi = quote.get("rsi")
-
-        if _alert_condition_met(alert, price, rsi):
-            alert.is_active = 0
-            alert.triggered_at = datetime.now(timezone.utc)
-            triggered.append({
-                "telegram_id": alert.telegram_id,
-                "ticker": alert.ticker,
-                "alert_type": alert.alert_type,
-                "target_value": float(alert.target_value),
-                "baseline_price": alert.baseline_price,
-                "current_price": price,
-                "rsi": rsi,
-            })
-
-    if triggered:
-        db.commit()
-
-    return triggered
-
-
-def format_trigger_message(event: dict) -> str:
-    """Builds the human-readable Telegram push message for a triggered alert."""
-    ticker = event["ticker"]
-    price = event["current_price"]
-    alert_type = event["alert_type"]
-
-    if alert_type == "PRICE_ABOVE":
-        return f"🚨 *{ticker}* has crossed above ₹{event['target_value']:.2f} — now at ₹{price:.2f}."
-    if alert_type == "PRICE_BELOW":
-        return f"🚨 *{ticker}* has dropped below ₹{event['target_value']:.2f} — now at ₹{price:.2f}."
-    if alert_type == "PERCENT_DROP":
-        return (
-            f"🚨 *{ticker}* has fallen {event['target_value']:.1f}%+ from ₹{event['baseline_price']:.2f} "
-            f"— now at ₹{price:.2f}."
-        )
-    if alert_type == "PERCENT_GAIN":
-        return (
-            f"🚀 *{ticker}* has risen {event['target_value']:.1f}%+ from ₹{event['baseline_price']:.2f} "
-            f"— now at ₹{price:.2f}."
-        )
-    if alert_type == "RSI_OVERSOLD":
-        return f"📉 *{ticker}* is now technically oversold (RSI {event['rsi']:.1f}) — potential buying zone."
-    if alert_type == "RSI_OVERBOUGHT":
-        return f"📈 *{ticker}* is now technically overbought (RSI {event['rsi']:.1f})."
-    return f"🚨 Alert triggered for *{ticker}*."
-
-import json as _json
-from datetime import datetime, timedelta, timezone
-from zoneinfo import ZoneInfo
-
-_IST = ZoneInfo("Asia/Kolkata")
-
-# ── Daily baseline reset ───────────────────────────────────────────────────────
-
-def reset_daily_baselines(db) -> int:
-    """
-    Called once at market open (9:16 AM IST by scheduler).
-    For every active PERCENT_DROP/GAIN alert on an index (is_recurring=1),
-    fetch today's open price and update baseline_price + baseline_date.
-    This is what makes "alert me if Nifty drops 0.5% today" work correctly
-    every day — without this, the baseline stays at creation-time price forever.
-    Returns count of alerts reset.
-    """
-    from app.database.db import Alert
-    today_str = datetime.now(_IST).strftime("%Y-%m-%d")
-
-    candidates = db.query(Alert).filter(
-        Alert.is_active == 1,
-        Alert.is_recurring == 1,
-        Alert.alert_type.in_(["PERCENT_DROP", "PERCENT_GAIN"]),
-        Alert.baseline_date != today_str,  # only reset if not already done today
-    ).all()
-
-    reset_count = 0
-    seen_tickers = {}
-
-    for alert in candidates:
-        ticker = alert.ticker
-        if ticker not in seen_tickers:
-            price = _get_current_price(ticker)
-            seen_tickers[ticker] = price
-        price = seen_tickers[ticker]
-        if price:
-            alert.baseline_price = str(price)
-            alert.baseline_date = today_str
-            reset_count += 1
-
-    if reset_count:
-        db.commit()
-
-    return reset_count
-
-
-# ── Complex alert: TRAILING_DAYS ───────────────────────────────────────────────
 
 def create_trailing_days_alert(db, telegram_id: str, ticker: str,
                                 direction: str, trigger_days: int,
                                 window_days: int) -> dict:
     """
-    Alert fires when a ticker has been negative (or positive) for
+    Alert fires when ticker has been moving in `direction` for at least
     `trigger_days` out of the last `window_days` trading days.
 
-    Example: "Alert me when Nifty trails for 5 out of 8 days"
+    Example: "Alert when Nifty trails for 5 out of 8 days"
     → direction='down', trigger_days=5, window_days=8
-
-    Stored as alert_type='TRAILING_DAYS' with extra_config JSON.
-    Checked every 15 min by check_active_alerts (only meaningful at EOD
-    but harmless to check more often since it uses daily close data).
     """
     from app.database.db import Alert
 
-    resolved = _INDEX_ALIASES.get(ticker.upper(), ticker.upper())
-    hist = _get_price_history(resolved, days=window_days + 5)
+    resolved = _resolve_ticker(ticker)
+    hist = _get_price_history(resolved, days=window_days + 10)
 
     if hist is None or len(hist) < window_days:
         return {"error": f"Not enough history for '{ticker}' to set up a trailing alert."}
 
-    config = _json.dumps({
-        "direction": direction.lower(),   # "up" or "down"
+    config = json.dumps({
+        "direction": direction.lower(),
         "trigger_days": trigger_days,
         "window_days": window_days,
     })
@@ -429,66 +232,33 @@ def create_trailing_days_alert(db, telegram_id: str, ticker: str,
     db.add(alert)
     db.commit()
 
+    direction_word = "down" if direction == "down" else "up"
     return {
         "created": True,
         "alert_type": "TRAILING_DAYS",
         "ticker": ticker,
         "description": (
-            f"I'll alert you when {ticker} closes {'down' if direction == 'down' else 'up'} "
+            f"Alert set. I'll notify you when {ticker} closes {direction_word} "
             f"for {trigger_days} or more days out of the last {window_days} trading days. "
-            "This is checked using daily closing prices."
+            "Checked using daily closing prices — recurring, no expiry."
         ),
     }
 
 
-def _check_trailing_days_alert(alert, price_histories: dict) -> bool:
-    """Returns True if the trailing condition is met."""
-    config = _json.loads(alert.extra_config or "{}")
-    direction = config.get("direction", "down")
-    trigger_days = int(config.get("trigger_days", 5))
-    window_days = int(config.get("window_days", 8))
-
-    hist = price_histories.get(alert.ticker)
-    if hist is None or len(hist) < window_days:
-        return False
-
-    closes = hist['Close'].dropna().tail(window_days)
-    daily_returns = closes.pct_change().dropna()
-
-    if direction == "down":
-        count = int((daily_returns < 0).sum())
-    else:
-        count = int((daily_returns > 0).sum())
-
-    return count >= trigger_days
-
-
-# ── Complex alert: LAGGED_PERCENT_DROP ────────────────────────────────────────
-_INDEX_ALIASES = {
-    "NIFTY50": "^NSEI",
-    "NIFTY 50": "^NSEI",
-    "NIFTY": "^NSEI",
-    "BANKNIFTY": "^NSEBANK",
-    "SENSEX": "^BSESN",
-    "NASDAQ100": "^NDX",
-    "NASDAQ": "^IXIC",
-}
 def create_lagged_percent_alert(db, telegram_id: str, ticker: str,
                                  drop_pct: float, lag_days: int) -> dict:
     """
-    Alert fires when ticker drops `drop_pct`% over a `lag_days` window
-    (comparing today's price to the price `lag_days` trading days ago).
+    Alert fires when ticker drops `drop_pct`% compared to its price
+    `lag_days` trading days ago. Rolling window — resets automatically.
 
-    Example: "Alert when Nifty drops 1-2% over 5 or 10 days"
+    Example: "Alert if Nifty drops 1.5% over 5 days"
     → drop_pct=1.5, lag_days=5
-
-    Stored as LAGGED_PERCENT_DROP. Checked every 15 min by scheduler.
     """
     from app.database.db import Alert
 
-    resolved = _INDEX_ALIASES.get(ticker.upper(), ticker.upper())
+    resolved = _resolve_ticker(ticker)
 
-    config = _json.dumps({
+    config = json.dumps({
         "drop_pct": float(drop_pct),
         "lag_days": int(lag_days),
     })
@@ -513,16 +283,79 @@ def create_lagged_percent_alert(db, telegram_id: str, ticker: str,
         "alert_type": "LAGGED_PERCENT_DROP",
         "ticker": ticker,
         "description": (
-            f"I'll alert you when {ticker} drops more than {drop_pct}% "
+            f"Alert set. I'll notify you when {ticker} drops more than {drop_pct}% "
             f"compared to its price {lag_days} trading days ago. "
-            "This resets automatically — it's a rolling window check."
+            "This is a rolling window — it checks continuously and is recurring."
         ),
     }
 
 
-def _check_lagged_percent_alert(alert, price_histories: dict) -> bool:
-    """Returns True if the lagged drop condition is met."""
-    config = _json.loads(alert.extra_config or "{}")
+# ── Daily baseline reset ───────────────────────────────────────────────────────
+
+def reset_daily_baselines(db) -> int:
+    """
+    Called by scheduler at 9:16 AM IST on weekdays (just after NSE market open).
+    For every active recurring PERCENT_DROP/GAIN alert, fetches today's
+    opening price and updates baseline_price + baseline_date.
+
+    This is the fix for the bug where the baseline was stuck at alert-creation
+    price instead of resetting to "today's open" each trading day.
+    Returns count of baselines reset.
+    """
+    from app.database.db import Alert
+
+    today_str = datetime.now(_IST).strftime("%Y-%m-%d")
+
+    candidates = db.query(Alert).filter(
+        Alert.is_active == 1,
+        Alert.is_recurring == 1,
+        Alert.alert_type.in_(["PERCENT_DROP", "PERCENT_GAIN"]),
+        Alert.baseline_date != today_str,
+    ).all()
+
+    reset_count = 0
+    price_cache = {}  # avoid fetching same ticker twice
+
+    for alert in candidates:
+        ticker = alert.ticker
+        if ticker not in price_cache:
+            price_cache[ticker] = _get_current_price(ticker)
+        price = price_cache[ticker]
+        if price is not None:
+            alert.baseline_price = str(price)
+            alert.baseline_date = today_str
+            reset_count += 1
+
+    if reset_count:
+        db.commit()
+        print(f"[AlertEngine] Reset {reset_count} daily baselines.")
+
+    return reset_count
+
+
+# ── Check helpers for complex alerts ─────────────────────────────────────────
+
+def _check_trailing_days(alert, price_histories: dict) -> bool:
+    """Returns True if the trailing-days condition is met."""
+    config = json.loads(alert.extra_config or "{}")
+    direction   = config.get("direction", "down")
+    trigger_days = int(config.get("trigger_days", 5))
+    window_days  = int(config.get("window_days", 8))
+
+    hist = price_histories.get(alert.ticker)
+    if hist is None or len(hist) < window_days + 1:
+        return False
+
+    closes = hist["Close"].dropna().tail(window_days + 1)
+    daily_returns = closes.pct_change().dropna().tail(window_days)
+
+    count = int((daily_returns < 0).sum()) if direction == "down" else int((daily_returns > 0).sum())
+    return count >= trigger_days
+
+
+def _check_lagged_percent(alert, price_histories: dict) -> bool:
+    """Returns True if the lagged-percent-drop condition is met."""
+    config   = json.loads(alert.extra_config or "{}")
     drop_pct = float(config.get("drop_pct", 1.0))
     lag_days = int(config.get("lag_days", 5))
 
@@ -530,29 +363,182 @@ def _check_lagged_percent_alert(alert, price_histories: dict) -> bool:
     if hist is None or len(hist) < lag_days + 1:
         return False
 
-    closes = hist['Close'].dropna()
+    closes = hist["Close"].dropna()
     if len(closes) < lag_days + 1:
         return False
 
     current = float(closes.iloc[-1])
-    past = float(closes.iloc[-(lag_days + 1)])
+    past    = float(closes.iloc[-(lag_days + 1)])
     if past == 0:
         return False
 
-    actual_drop = ((past - current) / past) * 100
-    return actual_drop >= drop_pct
+    actual_drop_pct = ((past - current) / past) * 100
+    return actual_drop_pct >= drop_pct
 
 
-# ── Helper: fetch N days of price history ────────────────────────────────────
+# ── Trigger message formatter ──────────────────────────────────────────────────
 
-def _get_price_history(ticker: str, days: int = 20):
-    """Fetch `days` calendar days of history for the complex alert checkers."""
-    import yfinance as yf
-    period = f"{days + 10}d"  # buffer for weekends/holidays
-    try:
-        hist = yf.Ticker(ticker).history(period=period)
-        if hist.empty and not ticker.startswith("^"):
-            hist = yf.Ticker(f"{ticker}.NS").history(period=period)
-        return hist if not hist.empty else None
-    except Exception:
-        return None
+def format_trigger_message(alert, current_price: float | None = None) -> str:
+    """Formats the push notification sent to the user when an alert fires."""
+    ticker_display = alert.ticker.lstrip("^")
+    price_str = f"₹{current_price:,.2f}" if current_price else "N/A"
+    recurring_note = " 🔄 Still watching." if alert.is_recurring else ""
+
+    base = f"🚨 *Atlas Alert — {ticker_display}*\n\n"
+
+    if alert.alert_type == "PRICE_BELOW":
+        return base + f"Price dropped below *{alert.target_value}*\nCurrent: *{price_str}*{recurring_note}"
+    if alert.alert_type == "PRICE_ABOVE":
+        return base + f"Price rose above *{alert.target_value}*\nCurrent: *{price_str}*{recurring_note}"
+    if alert.alert_type == "PERCENT_DROP":
+        return base + f"Dropped more than *{alert.target_value}%* from today's open\nCurrent: *{price_str}*{recurring_note}"
+    if alert.alert_type == "PERCENT_GAIN":
+        return base + f"Gained more than *{alert.target_value}%* from today's open\nCurrent: *{price_str}*{recurring_note}"
+    if alert.alert_type == "RSI_OVERSOLD":
+        return base + f"RSI dropped into oversold territory (≤ {alert.target_value})\nCurrent: *{price_str}* 🟢 Potential buy zone.{recurring_note}"
+    if alert.alert_type == "RSI_OVERBOUGHT":
+        return base + f"RSI entered overbought territory (≥ {alert.target_value})\nCurrent: *{price_str}* 🔴 Potential caution zone.{recurring_note}"
+    if alert.alert_type == "TRAILING_DAYS":
+        cfg = json.loads(alert.extra_config or "{}")
+        d = cfg.get("direction", "down")
+        t = cfg.get("trigger_days", "?")
+        w = cfg.get("window_days", "?")
+        return base + f"Trailing condition met: closed *{d}* for *{t}* of last *{w}* trading days. 🔄 Still watching."
+    if alert.alert_type == "LAGGED_PERCENT_DROP":
+        cfg = json.loads(alert.extra_config or "{}")
+        pct = cfg.get("drop_pct", "?")
+        lag = cfg.get("lag_days", "?")
+        return base + f"Dropped *{pct}%+* vs price *{lag}* trading days ago\nCurrent: *{price_str}* 🔄 Still watching."
+
+    return base + f"Condition met. Current: *{price_str}*{recurring_note}"
+
+
+# ── Main check loop — called every 15 min by scheduler ────────────────────────
+
+def check_active_alerts(db, bot_send_fn) -> int:
+    """
+    Checks all active alerts and fires any that meet their conditions.
+    `bot_send_fn` is an async coroutine: async def send(telegram_id, text).
+    Returns count of alerts triggered this cycle.
+
+    Key fix: fetches period="30d" (not "2d") so TRAILING_DAYS and
+    LAGGED_PERCENT_DROP have enough history to evaluate.
+    """
+    from app.database.db import Alert
+
+    active_alerts = db.query(Alert).filter(Alert.is_active == 1, Alert.armed == 1).all()
+    if not active_alerts:
+        return 0
+
+    # ── Batch-fetch price history — one yfinance call per unique ticker ──────
+    # Using period="30d" so complex alerts have enough daily close data.
+    unique_tickers = list({a.ticker for a in active_alerts})
+    price_histories = {}   # ticker → DataFrame
+    current_prices  = {}   # ticker → float (latest close)
+
+    for ticker in unique_tickers:
+        hist = _get_price_history(ticker, days=30)  # ← "30d" not "2d"
+        if hist is not None and not hist.empty:
+            price_histories[ticker] = hist
+            current_prices[ticker] = float(hist["Close"].iloc[-1])
+
+    triggered_count = 0
+
+    for alert in active_alerts:
+        ticker = alert.ticker
+        current = current_prices.get(ticker)
+        triggered = False
+
+        try:
+            if alert.alert_type == "PRICE_BELOW":
+                target = float(alert.target_value)
+                triggered = current is not None and current <= target
+
+            elif alert.alert_type == "PRICE_ABOVE":
+                target = float(alert.target_value)
+                triggered = current is not None and current >= target
+
+            elif alert.alert_type in ("PERCENT_DROP", "PERCENT_GAIN"):
+                if alert.baseline_price and current is not None:
+                    baseline = float(alert.baseline_price)
+                    pct_change = ((current - baseline) / baseline) * 100
+                    target_pct = float(alert.target_value.replace("%", ""))
+                    if alert.alert_type == "PERCENT_DROP":
+                        triggered = pct_change <= -target_pct
+                    else:
+                        triggered = pct_change >= target_pct
+
+            elif alert.alert_type == "RSI_OVERSOLD":
+                hist = price_histories.get(ticker)
+                if hist is not None:
+                    rsi = _compute_rsi(hist["Close"].dropna())
+                    if not rsi.empty:
+                        triggered = float(rsi.iloc[-1]) <= float(alert.target_value)
+
+            elif alert.alert_type == "RSI_OVERBOUGHT":
+                hist = price_histories.get(ticker)
+                if hist is not None:
+                    rsi = _compute_rsi(hist["Close"].dropna())
+                    if not rsi.empty:
+                        triggered = float(rsi.iloc[-1]) >= float(alert.target_value)
+
+            elif alert.alert_type == "TRAILING_DAYS":
+                triggered = _check_trailing_days(alert, price_histories)
+
+            elif alert.alert_type == "LAGGED_PERCENT_DROP":
+                triggered = _check_lagged_percent(alert, price_histories)
+
+        except Exception as exc:
+            print(f"[AlertEngine] Error checking alert {alert.id}: {exc}")
+            continue
+
+        if triggered:
+            msg = format_trigger_message(alert, current)
+            bot_send_fn(alert.telegram_id, msg)  # scheduler calls this
+            triggered_count += 1
+
+            if alert.is_recurring:
+                # Re-arm for next check; for RSI alerts, disarm until RSI exits zone
+                if alert.alert_type in ("RSI_OVERSOLD", "RSI_OVERBOUGHT"):
+                    alert.armed = 0  # disarmed until RSI normalises
+            else:
+                alert.is_active = 0  # one-shot: deactivate after firing
+
+            alert.triggered_at = datetime.now(timezone.utc)
+
+    db.commit()
+    return triggered_count
+
+
+def re_arm_rsi_alerts(db) -> int:
+    """
+    Re-arms RSI alerts whose RSI has returned to neutral zone (30–70).
+    Called by scheduler alongside check_active_alerts.
+    """
+    from app.database.db import Alert
+
+    disarmed = db.query(Alert).filter(
+        Alert.is_active == 1,
+        Alert.armed == 0,
+        Alert.alert_type.in_(["RSI_OVERSOLD", "RSI_OVERBOUGHT"]),
+    ).all()
+
+    re_armed = 0
+    for alert in disarmed:
+        hist = _get_price_history(alert.ticker, days=30)
+        if hist is None:
+            continue
+        rsi = _compute_rsi(hist["Close"].dropna())
+        if rsi.empty:
+            continue
+        current_rsi = float(rsi.iloc[-1])
+        if alert.alert_type == "RSI_OVERSOLD" and current_rsi > 35:
+            alert.armed = 1
+            re_armed += 1
+        elif alert.alert_type == "RSI_OVERBOUGHT" and current_rsi < 65:
+            alert.armed = 1
+            re_armed += 1
+
+    if re_armed:
+        db.commit()
+    return re_armed

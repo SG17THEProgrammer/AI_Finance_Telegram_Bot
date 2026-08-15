@@ -40,19 +40,20 @@ class User(Base):
 # --- NEW ALERT TABLE ---
 class Alert(Base):
     __tablename__ = "alerts"
-
+ 
     id = Column(Integer, primary_key=True)
     telegram_id = Column(String, index=True, nullable=False)
-    ticker = Column(String, nullable=False)          # e.g., RELIANCE, NIFTY_50
-    alert_type = Column(String, nullable=False)      # PRICE_ABOVE, PRICE_BELOW, PERCENT_DROP, PERCENT_GAIN, RSI_OVERSOLD, RSI_OVERBOUGHT
-    target_value = Column(String, nullable=False)    # e.g., "1400", "3" (percent, no % sign), "30" (RSI level)
-    baseline_price = Column(Float, nullable=True)     # snapshot price - used to evaluate PERCENT_DROP/PERCENT_GAIN; resets daily for recurring index alerts
-    baseline_date = Column(String, nullable=True)     # "YYYY-MM-DD" (IST) baseline_price was captured on - only meaningful for recurring index alerts
-    is_recurring = Column(Integer, default=0)        # 1 = keeps watching after triggering (RSI alerts, index percent alerts); 0 = one-shot
-    armed = Column(Integer, default=1)                # 1 = ready to fire; 0 = already fired, waiting to re-arm (recurring alerts only)
-    is_active = Column(Integer, default=1)           # 1 for active, 0 for triggered/disabled (one-shot alerts only - recurring alerts stay 1 until user deletes them)
-    triggered_at = Column(DateTime, nullable=True)    # last time this alert fired (recurring alerts update this each time, not just once)
-    extra_config = Column(Text, nullable=True)
+    ticker = Column(String, nullable=False)
+    alert_type = Column(String, nullable=False)      # PRICE_BELOW, PERCENT_DROP, RSI_OVERSOLD,
+                                                      # TRAILING_DAYS, LAGGED_PERCENT_DROP
+    target_value = Column(String, nullable=False)
+    baseline_price = Column(String, nullable=True)
+    baseline_date = Column(String, nullable=True)
+    is_recurring = Column(Integer, default=0)
+    armed = Column(Integer, default=1)
+    is_active = Column(Integer, default=1)
+    triggered_at = Column(DateTime, nullable=True)
+    extra_config = Column(Text, nullable=True)        # ← NEW: JSON for complex alert params
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 # -----------------------
 
@@ -94,30 +95,31 @@ def _run_lightweight_migrations():
     approach won't be enough and a real migration tool (Alembic) should be
     used instead.
     """
-    from sqlalchemy import inspect, text
+    migrations = [
+        # table,            column,                  sql_type
+        ("users",  "intent",             "TEXT"),
+        ("users",  "experience_level",   "TEXT"),
+        ("users",  "investment_horizon", "TEXT"),
+        ("users",  "risk_profile",       "TEXT"),
+        ("users",  "primary_goal",       "TEXT"),
+        ("users",  "preferred_markets",  "TEXT"),
+        ("alerts", "baseline_price",     "TEXT"),
+        ("alerts", "baseline_date",      "TEXT"),
+        ("alerts", "is_recurring",       "INTEGER DEFAULT 0"),
+        ("alerts", "armed",              "INTEGER DEFAULT 1"),
+        ("alerts", "triggered_at",       "DATETIME"),
+        ("alerts", "extra_config",       "TEXT"),     # ← NEW LINE ADDED HERE
+    ]
 
-    inspector = inspect(engine)
-    existing_tables = set(inspector.get_table_names())
-
-    for table in Base.metadata.sorted_tables:
-        if table.name not in existing_tables:
-            continue  # create_all() already created this one fresh, with all current columns
-
-        existing_columns = {col["name"] for col in inspector.get_columns(table.name)}
-        for column in table.columns:
-            if column.name in existing_columns:
-                continue
-
-            col_type = column.type.compile(engine.dialect)
-            ddl = f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" {col_type}'
+    from sqlalchemy import text
+    with engine.connect() as conn:
+        for table, column, col_type in migrations:
             try:
-                with engine.begin() as conn:
-                    conn.execute(text(ddl))
-                print(f"[DB migration] Added missing column {table.name}.{column.name}")
-            except Exception as exc:
-                # Don't crash startup over a migration hiccup (e.g. a concurrent
-                # deploy racing to add the same column) - log it and move on.
-                print(f"[DB migration] Could not add {table.name}.{column.name}: {exc}")
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}"))
+                conn.commit()
+                print(f"[Migration] Added column {table}.{column}")
+            except Exception:
+                pass  # Column already exists — safe to ignore
 
 
 def init_db():
