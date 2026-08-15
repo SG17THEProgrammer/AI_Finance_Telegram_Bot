@@ -264,6 +264,131 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "generate_candlestick_ma_chart",
+            "description": (
+                "Generates a professional candlestick chart overlaid with 50-day and 200-day "
+                "Moving Averages for a single stock. Call this when the user asks about trend "
+                "direction, moving average crossovers (Golden Cross / Death Cross), or wants a "
+                "technical chart that shows more than just price — e.g. 'show me TCS technically', "
+                "'is HDFC above its 200-day MA', 'technical analysis of Reliance'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Stock ticker (e.g. 'TCS', 'RELIANCE', 'AAPL')."
+                    },
+                    "period": {
+                        "type": "string",
+                        "description": "Timeframe to display. Default '6mo'.",
+                        "enum": ["1mo", "3mo", "6mo", "1y", "2y"]
+                    }
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "generate_rsi_chart",
+            "description": (
+                "Generates an RSI (Relative Strength Index) gauge chart with the price chart below it. "
+                "Call this when the user asks about RSI, overbought/oversold conditions, or whether "
+                "a stock is in a buying dip — e.g. 'is Nifty oversold?', 'show RSI for INFY', "
+                "'what is the RSI of TCS right now'. Also call this automatically when an RSI alert "
+                "triggers, to visually show the user why it fired."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Stock ticker (e.g. 'INFY', 'HDFCBANK')."
+                    },
+                    "period": {
+                        "type": "string",
+                        "description": "Lookback period. Default '3mo'.",
+                        "enum": ["1mo", "3mo", "6mo", "1y"]
+                    }
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "generate_sector_heatmap",
+            "description": (
+                "Generates a color-coded sector heatmap showing today's percentage performance "
+                "across key Indian sectors (IT, Banking, Auto, Pharma, FMCG, Energy, Metals, Infra) "
+                "and major indices (Nifty50, BankNifty, S&P500, Nasdaq). Call this when the user asks "
+                "for a market overview, 'what sectors are up today', 'market heatmap', or "
+                "'how are different sectors doing'. No ticker needed."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "generate_fundamental_radar",
+            "description": (
+                "Generates a radar (spider) chart comparing a stock's fundamentals — P/E, P/B, "
+                "ROE, Profit Margin, Revenue Growth — against approximate market averages. "
+                "Call this when the user asks for a fundamental comparison, valuation analysis, "
+                "or whether a stock looks cheap/expensive — e.g. 'is TCS undervalued?', "
+                "'show me fundamentals of HDFC', 'radar chart for Infosys'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Stock ticker (e.g. 'TCS', 'HDFCBANK', 'AAPL')."
+                    }
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "generate_support_resistance_chart",
+            "description": (
+                "Generates a price chart with automatically detected horizontal support and "
+                "resistance levels drawn on it. Call this when the user asks where to buy, "
+                "where the stock might bounce, key price levels, or entry/exit zones — "
+                "e.g. 'where is Reliance support?', 'show support resistance for ICICI', "
+                "'at what price should I buy TCS?'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Stock ticker (e.g. 'RELIANCE', 'ICICIBANK')."
+                    },
+                    "period": {
+                        "type": "string",
+                        "description": "History to analyze. Default '6mo'.",
+                        "enum": ["3mo", "6mo", "1y", "2y"]
+                    }
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "create_market_alert",
             "description": (
                 "Create a threshold alert that will proactively notify the user later when a "
@@ -395,6 +520,41 @@ def execute_tool_call(db, telegram_id: str, tool_name: str, arguments: dict) -> 
         from app.services.financial_data import generate_comparison_chart
         return json.dumps(generate_comparison_chart(
             arguments.get("queries", []), 
+            telegram_id,
+            arguments.get("period", "6mo")
+        ))
+
+    if tool_name == "generate_candlestick_ma_chart":
+        from app.services.chart_engine import generate_candlestick_with_ma
+        return json.dumps(generate_candlestick_with_ma(
+            arguments.get("query", ""),
+            telegram_id,
+            arguments.get("period", "6mo")
+        ))
+
+    if tool_name == "generate_rsi_chart":
+        from app.services.chart_engine import generate_rsi_gauge
+        return json.dumps(generate_rsi_gauge(
+            arguments.get("query", ""),
+            telegram_id,
+            arguments.get("period", "3mo")
+        ))
+
+    if tool_name == "generate_sector_heatmap":
+        from app.services.chart_engine import generate_sector_heatmap
+        return json.dumps(generate_sector_heatmap(telegram_id))
+
+    if tool_name == "generate_fundamental_radar":
+        from app.services.chart_engine import generate_fundamental_radar
+        return json.dumps(generate_fundamental_radar(
+            arguments.get("query", ""),
+            telegram_id
+        ))
+
+    if tool_name == "generate_support_resistance_chart":
+        from app.services.chart_engine import generate_support_resistance
+        return json.dumps(generate_support_resistance(
+            arguments.get("query", ""),
             telegram_id,
             arguments.get("period", "6mo")
         ))
