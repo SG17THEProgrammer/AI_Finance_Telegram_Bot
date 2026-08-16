@@ -803,7 +803,7 @@ def generate_us_sector_heatmap(telegram_id: str) -> dict:
         ROWS, COLS,
         left=0.012, right=0.988,
         top=1 - 0.90 / FIG_H,
-        bottom=0.52 / FIG_H,
+        bottom=0.60 / FIG_H,
         hspace=0.09, wspace=0.055,
         figure=fig,
     )
@@ -854,7 +854,7 @@ def generate_us_sector_heatmap(telegram_id: str) -> dict:
         ax.axis('off'); ax.set_facecolor(_BG)
 
     # Legend gradient bar
-    bar_ax = fig.add_axes([0.18, 0.38 / FIG_H, 0.64, 0.014])
+    bar_ax = fig.add_axes([0.18, 0.30 / FIG_H, 0.64, 0.014])
     grad = np.linspace(0, 1, 256).reshape(1, -1)
     bar_ax.imshow(grad, aspect='auto', cmap='RdYlGn', origin='lower')
     bar_ax.set_yticks([])
