@@ -522,6 +522,25 @@ TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "generate_us_sector_heatmap",
+            "description": (
+                "Generates a color-coded heatmap showing today's percentage performance "
+                "across US market sectors (Technology, Healthcare, Financials, Energy, etc.) "
+                "using SPDR sector ETFs. Also returns yesterday's data for comparison. "
+                "Call this when the user asks about US sector performance, 'which US sectors "
+                "are up today', 'US market overview', or 'US sector heatmap'. "
+                "For Indian sector performance, use generate_sector_heatmap instead."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    },
 ]
 
 
@@ -609,6 +628,10 @@ def execute_tool_call(db, telegram_id: str, tool_name: str, arguments: dict) -> 
     if tool_name == "generate_sector_heatmap":
         from app.services.chart_engine import generate_sector_heatmap
         return json.dumps(generate_sector_heatmap(telegram_id))
+
+    if tool_name == "generate_us_sector_heatmap":
+        from app.services.chart_engine import generate_us_sector_heatmap
+        return json.dumps(generate_us_sector_heatmap(telegram_id))
 
     if tool_name == "generate_fundamental_radar":
         from app.services.chart_engine import generate_fundamental_radar

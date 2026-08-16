@@ -703,3 +703,151 @@ def generate_support_resistance(query: str, telegram_id: str, period: str = "6mo
             f"Key resistance levels: {r_str}."
         )
     }
+
+# ── 6. US Sector Heatmap ──────────────────────────────────────────────────────
+
+_US_SECTOR_TICKERS = {
+    "Technology":    "XLK",
+    "Healthcare":    "XLV",
+    "Financials":    "XLF",
+    "Energy":        "XLE",
+    "Industrials":   "XLI",
+    "ConsDisc":      "XLY",
+    "ConsStaples":   "XLP",
+    "Utilities":     "XLU",
+    "Materials":     "XLB",
+    "Real Estate":   "XLRE",
+    "CommSvcs":      "XLC",
+    "S&P 500":       "^GSPC",
+    "Nasdaq 100":    "^NDX",
+    "Dow Jones":     "^DJI",
+}
+
+
+def generate_us_sector_heatmap(telegram_id: str) -> dict:
+    """
+    US sector heatmap using SPDR sector ETFs (XLK, XLV, XLF, etc.).
+    Same visual style as the Indian heatmap — dark theme, RdYlGn gradient,
+    color scale bar. Also returns raw data for LLM "today vs yesterday" queries.
+    Only shown to users whose preferred_markets includes 'us_stocks'.
+    """
+    chart_path = f"chart_{telegram_id}.png"
+    _purge_chart(chart_path)
+
+    perf_today = {}
+    perf_yesterday = {}
+
+    for sector, ticker in _US_SECTOR_TICKERS.items():
+        try:
+            hist = yf.Ticker(ticker).history(period="5d")
+            hist = hist[hist['Volume'] > 0]
+
+            if len(hist) >= 2:
+                prev = float(hist['Close'].iloc[-1])
+                prev_prev = float(hist['Close'].iloc[-2])
+                perf_today[sector] = round(((prev - prev_prev) / prev_prev) * 100, 2)
+
+            if len(hist) >= 3:
+                p = float(hist['Close'].iloc[-2])
+                pp = float(hist['Close'].iloc[-3])
+                perf_yesterday[sector] = round(((p - pp) / pp) * 100, 2)
+        except Exception:
+            pass
+
+    if not perf_today:
+        return {"error": "Could not fetch US sector data. Market may be closed or APIs rate-limited."}
+
+    labels = list(perf_today.keys())
+    values = np.array([perf_today[k] for k in labels], dtype=float)
+
+    cols = 4
+    rows = int(np.ceil(len(labels) / cols))
+    fig_w = cols * 3.2
+    fig_h = rows * 2.4 + 0.8
+
+    fig = plt.figure(figsize=(fig_w, fig_h), facecolor=_BG)
+    gs = gridspec.GridSpec(
+        rows, cols + 1,
+        width_ratios=[1] * cols + [0.08],
+        hspace=0.08, wspace=0.08,
+        figure=fig,
+        left=0.03, right=0.95, top=0.88, bottom=0.04
+    )
+
+    cmap = matplotlib.colormaps['RdYlGn']
+    max_abs = max(abs(values).max(), 0.5)
+    norm = mcolors.TwoSlopeNorm(vmin=-max_abs, vcenter=0, vmax=max_abs)
+
+    for i, (label, val) in enumerate(zip(labels, values)):
+        row_i, col_i = divmod(i, cols)
+        ax = fig.add_subplot(gs[row_i, col_i])
+        ax.set_facecolor(_BG)
+        ax.axis('off')
+
+        color = cmap(norm(val))
+        rect = plt.Rectangle((0.04, 0.06), 0.92, 0.88,
+                              transform=ax.transAxes, color=color,
+                              linewidth=0, zorder=1)
+        ax.add_patch(rect)
+
+        border = plt.Rectangle((0.04, 0.06), 0.92, 0.88,
+                                transform=ax.transAxes,
+                                fill=False, edgecolor=_BG, linewidth=2, zorder=2)
+        ax.add_patch(border)
+
+        ax.text(0.5, 0.62, label,
+                transform=ax.transAxes,
+                ha='center', va='center',
+                color='white', fontsize=10.5, fontweight='bold', zorder=3)
+
+        sign = "+" if val >= 0 else ""
+        ax.text(0.5, 0.30, f"{sign}{val:.2f}%",
+                transform=ax.transAxes,
+                ha='center', va='center',
+                color='white', fontsize=13, fontweight='bold', zorder=3)
+
+    # Fill empty cells
+    total_cells = rows * cols
+    for i in range(len(labels), total_cells):
+        row_i, col_i = divmod(i, cols)
+        ax = fig.add_subplot(gs[row_i, col_i])
+        ax.set_facecolor(_BG)
+        ax.axis('off')
+
+    # Color scale bar
+    cbar_ax = fig.add_subplot(gs[:, cols])
+    sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+    sm.set_array([])
+    cbar = fig.colorbar(sm, cax=cbar_ax)
+    cbar.ax.tick_params(colors=_TEXT, labelsize=8)
+    cbar.set_label('Return %', color=_TEXT, fontsize=9)
+    cbar.outline.set_edgecolor(_GRID)
+
+    fig.suptitle('🇺🇸  US Market Sector Heatmap — Today\'s Performance',
+                 color=_TEXT, fontsize=14, fontweight='bold', y=0.97)
+
+    fig.savefig(chart_path, dpi=150, bbox_inches='tight', facecolor=_BG)
+    plt.close('all')
+
+    top_gainer = max(perf_today, key=perf_today.get)
+    top_loser = min(perf_today, key=perf_today.get)
+
+    compare_lines = []
+    if perf_yesterday:
+        for sector in labels:
+            if sector in perf_yesterday:
+                delta = perf_today[sector] - perf_yesterday[sector]
+                compare_lines.append(
+                    f"{sector}: today {perf_today[sector]:+.2f}% vs yesterday {perf_yesterday[sector]:+.2f}% (Δ{delta:+.2f}%)"
+                )
+
+    return {
+        "success": (
+            f"US sector heatmap is attached below. "
+            f"Best: {top_gainer} ({perf_today[top_gainer]:+.2f}%). "
+            f"Worst: {top_loser} ({perf_today[top_loser]:+.2f}%)."
+        ),
+        "today": perf_today,
+        "yesterday": perf_yesterday,
+        "comparison": compare_lines,
+    }

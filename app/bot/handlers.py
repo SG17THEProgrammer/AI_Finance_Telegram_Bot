@@ -128,6 +128,73 @@ def build_profile_summary(user) -> str:
         elif risk.lower() == "aggressive":
             summary += "- SEBI GUARDRAIL (AGGRESSIVE): Accepts higher volatility. Provide deeper technicals but remind of stop-loss discipline.\n"
 
+    # --- GOAL-BASED FRAMING ---
+    goal = user.primary_goal
+    horizon = user.investment_horizon
+    if goal or horizon:
+        summary += "\n=== GOAL-BASED FRAMING (apply to every response) ===\n"
+
+        # Horizon-specific instruction
+        if horizon == "< 1 year":
+            summary += (
+                "- SHORT-TERM HORIZON (<1 year): Prioritise liquidity, capital safety, and near-term catalysts. "
+                "Avoid recommending illiquid or long-lock-up instruments. "
+                "Flag high volatility as a real risk given the short window.\n"
+            )
+        elif horizon == "1–3 years":
+            summary += (
+                "- MEDIUM-TERM HORIZON (1-3 years): Balance between growth and stability. "
+                "Suitable for large-cap equities, balanced mutual funds, and short-duration debt. "
+                "Flag instruments with lock-ins longer than the user's horizon.\n"
+            )
+        elif horizon == "3-5 years":
+            summary += (
+                "- MEDIUM-LONG HORIZON (3-5 years): Can absorb moderate volatility. "
+                "Diversified equity, SIPs, and sector plays are appropriate. "
+                "Compounding effects should be highlighted when relevant.\n"
+            )
+        elif horizon in ("5+ years", "5+ Years"):
+            summary += (
+                "- LONG-TERM HORIZON (5+ years): Full compounding runway. "
+                "Quality businesses, index exposure, and high-growth sectors are appropriate. "
+                "Short-term price swings are noise — frame them as entry opportunities, not threats.\n"
+            )
+
+        # Goal-specific instruction
+        if goal:
+            g = goal.lower()
+            if "car" in g or "purchase" in g or "house" in g or "wedding" in g or "buy" in g:
+                summary += (
+                    f"- GOAL ({goal}): This is a defined, time-bound purchase goal. "
+                    "Prioritise capital preservation as the target date approaches. "
+                    "Recommend SIPs or recurring deposits over volatile instruments. "
+                    "Always factor in whether the user has enough time to recover from a drawdown before their target date.\n"
+                )
+            elif "retirement" in g:
+                summary += (
+                    f"- GOAL (Retirement): Long-duration goal requiring inflation-beating returns over time. "
+                    "Recommend diversified equity + debt allocation. "
+                    "Highlight the importance of regular review and not panic-selling during downturns.\n"
+                )
+            elif "income" in g or "regular" in g:
+                summary += (
+                    f"- GOAL (Regular income): User needs cash flow, not just capital appreciation. "
+                    "Prioritise dividend-paying stocks, REITs, or debt instruments with regular payouts. "
+                    "Avoid recommending growth stocks that don't pay dividends as primary holdings.\n"
+                )
+            elif "wealth" in g or "creation" in g or "appreciation" in g or "capital" in g:
+                summary += (
+                    f"- GOAL ({goal}): Long-term wealth building. "
+                    "Quality equities, compounding, and SIPs are core strategies. "
+                    "Frame every analysis through the lens of long-term value, not short-term price action.\n"
+                )
+            else:
+                # Custom / freeform goal
+                summary += (
+                    f"- GOAL ({goal}): Always frame advice in the context of this specific goal. "
+                    "Ask yourself: does this recommendation actually move the user closer to '{goal}'?\n"
+                )
+
     return summary
 
 
