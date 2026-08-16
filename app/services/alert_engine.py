@@ -503,7 +503,7 @@ def check_active_alerts(db, bot_send_fn) -> int:
 
             if alert.is_recurring:
                 # Re-arm for next check; for RSI alerts, disarm until RSI exits zone
-                if alert.alert_type in ("RSI_OVERSOLD", "RSI_OVERBOUGHT"):
+                if alert.alert_type in ("RSI_OVERSOLD", "RSI_OVERBOUGHT", "TRAILING_DAYS", "LAGGED_PERCENT_DROP"):
                     alert.armed = 0  # disarmed until RSI normalises
             else:
                 alert.is_active = 0  # one-shot: deactivate after firing
@@ -514,9 +514,9 @@ def check_active_alerts(db, bot_send_fn) -> int:
     return triggered_count
 
 
-def re_arm_rsi_alerts(db) -> int:
+def re_arm_recurring_alerts(db) -> int:
     """
-    Re-arms RSI alerts whose RSI has returned to neutral zone (30–70).
+    Re-arms recurring alerts that have returned to a neutral state.
     Called by scheduler alongside check_active_alerts.
     """
     from app.database.db import Alert
@@ -524,24 +524,54 @@ def re_arm_rsi_alerts(db) -> int:
     disarmed = db.query(Alert).filter(
         Alert.is_active == 1,
         Alert.armed == 0,
-        Alert.alert_type.in_(["RSI_OVERSOLD", "RSI_OVERBOUGHT"]),
+        Alert.alert_type.in_(["RSI_OVERSOLD", "RSI_OVERBOUGHT", "TRAILING_DAYS", "LAGGED_PERCENT_DROP"]),
     ).all()
+
+    if not disarmed:
+        return 0
+
+    # Batch-fetch price history for the disarmed alerts
+    unique_tickers = list({a.ticker for a in disarmed})
+    price_histories = {}
+    for ticker in unique_tickers:
+        hist = _get_price_history(ticker, days=30)
+        if hist is not None and not hist.empty:
+            price_histories[ticker] = hist
 
     re_armed = 0
     for alert in disarmed:
-        hist = _get_price_history(alert.ticker, days=30)
+        hist = price_histories.get(alert.ticker)
         if hist is None:
             continue
-        rsi = _compute_rsi(hist["Close"].dropna())
-        if rsi.empty:
+
+        try:
+            if alert.alert_type == "RSI_OVERSOLD":
+                rsi = _compute_rsi(hist["Close"].dropna())
+                if not rsi.empty and float(rsi.iloc[-1]) > 35:
+                    alert.armed = 1
+                    re_armed += 1
+
+            elif alert.alert_type == "RSI_OVERBOUGHT":
+                rsi = _compute_rsi(hist["Close"].dropna())
+                if not rsi.empty and float(rsi.iloc[-1]) < 65:
+                    alert.armed = 1
+                    re_armed += 1
+
+            elif alert.alert_type == "TRAILING_DAYS":
+                # If the trailing condition is NO LONGER true, re-arm it
+                if not _check_trailing_days(alert, price_histories):
+                    alert.armed = 1
+                    re_armed += 1
+
+            elif alert.alert_type == "LAGGED_PERCENT_DROP":
+                # If the drop condition is NO LONGER true, re-arm it
+                if not _check_lagged_percent(alert, price_histories):
+                    alert.armed = 1
+                    re_armed += 1
+
+        except Exception as exc:
+            print(f"[AlertEngine] Error re-arming alert {alert.id}: {exc}")
             continue
-        current_rsi = float(rsi.iloc[-1])
-        if alert.alert_type == "RSI_OVERSOLD" and current_rsi > 35:
-            alert.armed = 1
-            re_armed += 1
-        elif alert.alert_type == "RSI_OVERBOUGHT" and current_rsi < 65:
-            alert.armed = 1
-            re_armed += 1
 
     if re_armed:
         db.commit()

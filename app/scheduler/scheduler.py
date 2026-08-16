@@ -131,7 +131,8 @@ async def _check_and_send_briefings(bot):
 
 async def _check_and_send_alerts(bot):
     """Checks all active alerts and pushes notifications for triggered ones."""
-    from app.services.alert_engine import check_active_alerts, re_arm_rsi_alerts
+    # UPDATE THIS IMPORT
+    from app.services.alert_engine import check_active_alerts, re_arm_recurring_alerts
 
     db = SessionLocal()
     try:
@@ -144,7 +145,9 @@ async def _check_and_send_alerts(bot):
 
         _pending_alert_messages.clear()
         check_active_alerts(db, _send_fn)
-        re_arm_rsi_alerts(db)
+        
+        # UPDATE THIS FUNCTION CALL
+        re_arm_recurring_alerts(db)
     finally:
         db.close()
 
