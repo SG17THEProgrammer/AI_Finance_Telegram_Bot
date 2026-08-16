@@ -90,6 +90,28 @@ def _get_price_history(ticker: str, days: int = 30):
             continue
     return None
 
+def _get_previous_close(ticker: str) -> float | None:
+    """Fetches the actual previous day's closing price for baseline resets."""
+    import yfinance as yf
+    candidates = [ticker]
+    if not ticker.startswith("^"):
+        candidates += [f"{ticker}.NS", f"{ticker}.BO"]
+
+    for candidate in candidates:
+        try:
+            # fast_info.previous_close is reliable and fast
+            prev = getattr(yf.Ticker(candidate).fast_info, "previous_close", None)
+            if prev:
+                return float(prev)
+        except Exception:
+            continue
+
+    # Fallback to history if fast_info fails
+    hist = _get_price_history(ticker, days=5)
+    if hist is not None and len(hist) >= 2:
+        return float(hist["Close"].iloc[-2])
+    return None
+
 
 def _compute_rsi(close, period: int = 14):
     """Wilder's RSI-14."""
@@ -323,7 +345,7 @@ def reset_daily_baselines(db) -> int:
     for alert in candidates:
         ticker = alert.ticker
         if ticker not in price_cache:
-            price_cache[ticker] = _get_current_price(ticker)
+            price_cache[ticker] = _get_previous_close(ticker)
         price = price_cache[ticker]
         if price is not None:
             alert.baseline_price = str(price)
@@ -382,7 +404,7 @@ def _check_lagged_percent(alert, price_histories: dict) -> bool:
 
 # ── Trigger message formatter ──────────────────────────────────────────────────
 
-def format_trigger_message(alert, current_price: float | None = None) -> str:
+def format_trigger_message(alert, current_price: float | None = None, hist=None) -> str:
     """Formats the push notification sent to the user when an alert fires."""
     ticker_display = alert.ticker.lstrip("^")
     price_str = f"₹{current_price:,.2f}" if current_price else "N/A"
@@ -395,20 +417,46 @@ def format_trigger_message(alert, current_price: float | None = None) -> str:
     if alert.alert_type == "PRICE_ABOVE":
         return base + f"Price rose above *{alert.target_value}*\nCurrent: *{price_str}*{recurring_note}"
     if alert.alert_type == "PERCENT_DROP":
-        return base + f"Dropped more than *{alert.target_value}%* from today's open\nCurrent: *{price_str}*{recurring_note}"
+        # Notice we changed "today's open" to "yesterday's close" in the text
+        return base + f"Dropped more than *{alert.target_value}%* from yesterday's close\nCurrent: *{price_str}*{recurring_note}"
     if alert.alert_type == "PERCENT_GAIN":
-        return base + f"Gained more than *{alert.target_value}%* from today's open\nCurrent: *{price_str}*{recurring_note}"
+        return base + f"Gained more than *{alert.target_value}%* from yesterday's close\nCurrent: *{price_str}*{recurring_note}"
     if alert.alert_type == "RSI_OVERSOLD":
         return base + f"RSI dropped into oversold territory (≤ {alert.target_value})\nCurrent: *{price_str}* 🟢 Potential buy zone.{recurring_note}"
     if alert.alert_type == "RSI_OVERBOUGHT":
         return base + f"RSI entered overbought territory (≥ {alert.target_value})\nCurrent: *{price_str}* 🔴 Potential caution zone.{recurring_note}"
+    
     if alert.alert_type == "TRAILING_DAYS":
+        import json
         cfg = json.loads(alert.extra_config or "{}")
         d = cfg.get("direction", "down")
         t = cfg.get("trigger_days", "?")
-        w = cfg.get("window_days", "?")
-        return base + f"Trailing condition met: closed *{d}* for *{t}* of last *{w}* trading days. 🔄 Still watching."
+        w = int(cfg.get("window_days", 8))
+        
+        out_msg = base + f"Trailing condition met: closed *{d}* for *{t}* of last *{w}* trading days.\n\n*Daily Closing Breakdown (Last {w} Sessions):*\n"
+        
+        if hist is not None and len(hist) > w:
+            # We take w+1 rows so we can calculate the percentage change for the first day against the day before it
+            recent = hist.tail(w + 1)
+            for i in range(1, len(recent)):
+                prev_close = float(recent['Close'].iloc[i-1])
+                curr_close = float(recent['Close'].iloc[i])
+                
+                # Format date like 'Aug 5'
+                date_str = recent.index[i].strftime("%b %d").replace(" 0", " ")
+                pct_change = ((curr_close - prev_close) / prev_close) * 100
+                
+                if pct_change < 0:
+                    out_msg += f"• {date_str}: {curr_close:,.2f} (❌ Down by {pct_change:.2f}%)\n"
+                else:
+                    out_msg += f"• {date_str}: {curr_close:,.2f} (✅ Up by +{pct_change:.2f}%)\n"
+        else:
+            out_msg += "_(History breakdown unavailable)_\n"
+            
+        return out_msg + "\n🔄 Alert Disarmed for 24h to prevent spam."
+
     if alert.alert_type == "LAGGED_PERCENT_DROP":
+        import json
         cfg = json.loads(alert.extra_config or "{}")
         pct = cfg.get("drop_pct", "?")
         lag = cfg.get("lag_days", "?")
@@ -497,7 +545,9 @@ def check_active_alerts(db, bot_send_fn) -> int:
             continue
 
         if triggered:
-            msg = format_trigger_message(alert, current)
+            # Extract the history dataframe and pass it to the formatter
+            hist = price_histories.get(ticker)
+            msg = format_trigger_message(alert, current, hist=hist)
             bot_send_fn(alert.telegram_id, msg)  # scheduler calls this
             triggered_count += 1
 
