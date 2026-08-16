@@ -264,9 +264,10 @@ def start_scheduler(bot):
 
     # Job 5: API rate monitor — every 60 min
     scheduler.add_job(
-        _check_api_rate_limits, "interval",
-        minutes=60, args=[bot]
-    )
+    _check_api_rate_limits, "interval",
+    minutes=60, args=[bot],
+    misfire_grace_time=60
+)
 
     scheduler.start()
     print("[Scheduler] Started: briefings (1 min), alerts (15 min), baseline reset (9:16 AM IST), rate monitor (60 min).")

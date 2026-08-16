@@ -58,7 +58,7 @@ def _get_current_price(ticker: str) -> float | None:
     for candidate in candidates:
         try:
             t = yf.Ticker(candidate)
-            hist = t.history(period="2d")
+            hist = t.history(period="5d")
             if not hist.empty:
                 return float(hist["Close"].iloc[-1])
         except Exception:
@@ -67,12 +67,16 @@ def _get_current_price(ticker: str) -> float | None:
 
 
 def _get_price_history(ticker: str, days: int = 30):
-    """
-    Fetches `days` calendar days of OHLCV history.
-    Uses period="30d" by default so trailing/lagged alerts have enough data.
-    Returns DataFrame or None.
-    """
-    period = f"{days}d"
+    # Map requested days to the nearest valid yfinance period string
+    if days <= 5:
+        period = "5d"
+    elif days <= 21:
+        period = "1mo"
+    elif days <= 63:
+        period = "3mo"
+    else:
+        period = "6mo"
+
     candidates = [ticker]
     if not ticker.startswith("^"):
         candidates += [f"{ticker}.NS", f"{ticker}.BO"]
