@@ -517,9 +517,10 @@ def check_active_alerts(db, bot_send_fn) -> int:
 def re_arm_recurring_alerts(db) -> int:
     """
     Re-arms recurring alerts that have returned to a neutral state.
-    Called by scheduler alongside check_active_alerts.
+    Applies a strict 24-hour cooldown to prevent intraday flapping spam.
     """
     from app.database.db import Alert
+    from datetime import datetime, timezone
 
     disarmed = db.query(Alert).filter(
         Alert.is_active == 1,
@@ -539,7 +540,19 @@ def re_arm_recurring_alerts(db) -> int:
             price_histories[ticker] = hist
 
     re_armed = 0
+    # Strip timezone to avoid naive vs aware datetime math errors in SQLite
+    now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+
     for alert in disarmed:
+        # ── ANTI-FLAP COOLDOWN FIX ──
+        # Prevent re-arming if the alert triggered within the last 24 hours.
+        # This stops 15-minute spam loops caused by live market fluctuations.
+        if alert.triggered_at:
+            triggered_naive = alert.triggered_at.replace(tzinfo=None)
+            hours_since = (now_utc_naive - triggered_naive).total_seconds() / 3600.0
+            if hours_since < 24:
+                continue  # Skip this alert, it triggered too recently
+
         hist = price_histories.get(alert.ticker)
         if hist is None:
             continue
@@ -558,13 +571,11 @@ def re_arm_recurring_alerts(db) -> int:
                     re_armed += 1
 
             elif alert.alert_type == "TRAILING_DAYS":
-                # If the trailing condition is NO LONGER true, re-arm it
                 if not _check_trailing_days(alert, price_histories):
                     alert.armed = 1
                     re_armed += 1
 
             elif alert.alert_type == "LAGGED_PERCENT_DROP":
-                # If the drop condition is NO LONGER true, re-arm it
                 if not _check_lagged_percent(alert, price_histories):
                     alert.armed = 1
                     re_armed += 1
