@@ -748,103 +748,146 @@ def _tile_bg(val: float, max_abs: float) -> str:
     return f"#{r:02x}{g:02x}{b:02x}"
 
 
-import matplotlib.pyplot as plt
-from matplotlib.patches import FancyBboxPatch
-import matplotlib.colors as mcolors
-import numpy as np
-from datetime import datetime as dt
-
-def generate_us_sector_heatmap(telegram_id: str, market_data: dict) -> dict:
+def generate_us_sector_heatmap(telegram_id: str) -> dict:
     """
     US sector heatmap using SPDR sector ETFs (XLK, XLV, XLF, etc.).
-    Upgraded UI: Rounded tiles, distinct gaps, typography hierarchy, and a clean legend.
+    Dark theme, rounded tiles, vivid saturation, ETF ticker labels.
+    Also returns raw data so LLM can answer 'today vs yesterday' queries.
     """
+    from datetime import datetime as _dt
     chart_path = f"chart_{telegram_id}.png"
     _purge_chart(chart_path)
-    
-    # 1. Setup Canvas (Dark Theme)
-    fig, ax = plt.subplots(figsize=(12, 8), facecolor='#0d1117')
-    ax.set_facecolor('#0d1117')
-    ax.axis('off') # Hide standard axes completely
-    
-    # 2. Custom Diverging Colormap (Softer, modern colors)
-    # Red -> Dark Neutral -> Green
-    cmap = mcolors.LinearSegmentedColormap.from_list(
-        "ModernHeatmap", ["#de425b", "#21262d", "#488f31"]
+
+    perf_today = {}
+    perf_yesterday = {}
+
+    for sector, ticker in _US_SECTOR_TICKERS.items():
+        try:
+            hist = yf.Ticker(ticker).history(period="5d")
+            hist = hist[hist['Volume'] > 0]
+            if len(hist) >= 2:
+                prev     = float(hist['Close'].iloc[-1])
+                prev_prev = float(hist['Close'].iloc[-2])
+                perf_today[sector] = round(((prev - prev_prev) / prev_prev) * 100, 2)
+            if len(hist) >= 3:
+                p  = float(hist['Close'].iloc[-2])
+                pp = float(hist['Close'].iloc[-3])
+                perf_yesterday[sector] = round(((p - pp) / pp) * 100, 2)
+        except Exception:
+            pass
+
+    if not perf_today:
+        return {"error": "Could not fetch US sector data. Market may be closed or APIs rate-limited."}
+
+    labels   = list(perf_today.keys())
+    values   = [perf_today[k] for k in labels]
+    max_abs  = max(abs(v) for v in values) or 1.0
+
+    COLS  = 4
+    ROWS  = int(np.ceil(len(labels) / COLS))
+    FIG_W = 14.0
+    FIG_H = ROWS * 2.45 + 1.35
+
+    fig = plt.figure(figsize=(FIG_W, FIG_H), facecolor=_BG, dpi=160)
+
+    # Title
+    fig.text(0.5, 1 - 0.30 / FIG_H,
+             "US Market Sector Heatmap",
+             ha='center', va='top', color='#ffffff',
+             fontsize=17, fontweight='bold')
+    fig.text(0.5, 1 - 0.62 / FIG_H,
+             f"Today's Performance  \u2022  SPDR Sector ETFs  \u2022  {_dt.now().strftime('%b %d, %Y')}",
+             ha='center', va='top', color='#6e7681', fontsize=9)
+
+    gs = gridspec.GridSpec(
+        ROWS, COLS,
+        left=0.012, right=0.988,
+        top=1 - 0.90 / FIG_H,
+        bottom=0.52 / FIG_H,
+        hspace=0.09, wspace=0.055,
+        figure=fig,
     )
-    
-    # Extract values to find max absolute for color scaling
-    values = [data['change'] for data in market_data.values()]
-    max_abs = max(max(np.abs(values)), 0.01) if values else 1.0
-    norm = mcolors.Normalize(vmin=-max_abs, vmax=max_abs)
-    
-    # 3. Grid Layout Math
-    cols = 4
-    rows = int(np.ceil(len(market_data) / cols))
-    
-    # Tile dimensions and gaps
-    tile_w, tile_h = 0.22, 0.20
-    gap_x, gap_y = 0.03, 0.04
-    
-    # Start coordinates (leaving room at the bottom for the legend)
-    start_x = 0.02
-    start_y = 0.95 - tile_h 
 
-    # 4. Draw the Tiles
-    for i, (sector, data) in enumerate(market_data.items()):
-        col = i % cols
-        row = i // cols
-        
-        x = start_x + col * (tile_w + gap_x)
-        y = start_y - row * (tile_h + gap_y)
-        
-        val = data['change']
-        ticker = data['ticker']
-        color = cmap(norm(val))
-        
-        # Draw rounded rectangle
-        box = FancyBboxPatch(
-            (x, y), tile_w, tile_h, 
-            boxstyle="round,pad=0.02,rounding_size=0.05",
-            ec="#0d1117", fc=color, lw=1.5, transform=ax.transAxes
-        )
-        ax.add_patch(box)
-        
-        # 5. Typography Hierarchy
-        # Ticker (Top, subtle)
-        ax.text(x + tile_w/2, y + tile_h * 0.75, ticker, 
-                color='white', ha='center', va='center', fontsize=12, alpha=0.7, transform=ax.transAxes)
-        
-        # Percentage (Middle, Bold)
-        sign = "+" if val > 0 else ""
-        ax.text(x + tile_w/2, y + tile_h * 0.45, f"{sign}{val:.2f}%", 
-                color='white', ha='center', va='center', fontsize=22, fontweight='bold', transform=ax.transAxes)
-        
-        # Sector Name (Bottom, clear)
-        ax.text(x + tile_w/2, y + tile_h * 0.15, sector, 
-                color='white', ha='center', va='center', fontsize=10, transform=ax.transAxes)
+    for i, (label, val) in enumerate(zip(labels, values)):
+        r_i, c_i = divmod(i, COLS)
+        ax = fig.add_subplot(gs[r_i, c_i])
+        ax.set_xlim(0, 1); ax.set_ylim(0, 1)
+        ax.axis('off'); ax.set_facecolor(_BG)
 
-    # 6. The Legend (Spaced properly at the bottom)
-    sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
-    sm.set_array([])
-    
-    # [left, bottom, width, height]
-    cbar_ax = fig.add_axes([0.15, 0.08, 0.7, 0.02]) 
-    cbar = fig.colorbar(sm, cax=cbar_ax, orientation='horizontal')
-    
-    cbar.set_ticks([-max_abs, 0, max_abs])
-    cbar.set_ticklabels(['Underperforming', 'Flat', 'Outperforming'])
-    cbar.ax.tick_params(colors='white', labelsize=10, length=0) 
-    cbar.outline.set_visible(False)
+        bg = _tile_bg(val, max_abs)
 
-    # 7. Add Title
-    fig.text(0.5, 0.96, "US Market Sector Heatmap", 
-             color='white', fontsize=18, fontweight='bold', ha='center')
-    fig.text(0.5, 0.93, f"Data as of {dt.now().strftime('%b %d, %Y')}", 
-             color='white', fontsize=10, alpha=0.6, ha='center')
+        # Base rounded tile
+        ax.add_patch(mpatches.FancyBboxPatch(
+            (0.03, 0.04), 0.94, 0.92,
+            boxstyle="round,pad=0.04", lw=0,
+            facecolor=bg, transform=ax.transAxes, zorder=1, clip_on=False))
 
-    # Save and return
-    plt.savefig(chart_path, dpi=150, bbox_inches='tight', facecolor='#0d1117')
-    plt.close(fig)
-    
-    return {"status": "success", "file": chart_path, "data": market_data}
+        # Gloss strip at top of tile
+        ax.add_patch(mpatches.FancyBboxPatch(
+            (0.03, 0.76), 0.94, 0.20,
+            boxstyle="round,pad=0.03", lw=0,
+            facecolor='white', alpha=0.08,
+            transform=ax.transAxes, zorder=2, clip_on=False))
+
+        # ETF ticker — small, top
+        ticker = _US_SECTOR_TICKERS.get(label, "")
+        if not ticker.startswith("^"):
+            ax.text(0.5, 0.81, ticker,
+                    transform=ax.transAxes, ha='center', va='center',
+                    color='white', fontsize=8.5, alpha=0.80, zorder=4)
+
+        # Sector name — middle
+        ax.text(0.5, 0.58, label,
+                transform=ax.transAxes, ha='center', va='center',
+                color='white', fontsize=11.5, fontweight='bold', zorder=4)
+
+        # Percentage — large, bottom
+        sign = "+" if val >= 0 else ""
+        ax.text(0.5, 0.27, f"{sign}{val:.2f}%",
+                transform=ax.transAxes, ha='center', va='center',
+                color='white', fontsize=18, fontweight='bold', zorder=4)
+
+    # Empty cells
+    for i in range(len(labels), ROWS * COLS):
+        r_i, c_i = divmod(i, COLS)
+        ax = fig.add_subplot(gs[r_i, c_i])
+        ax.axis('off'); ax.set_facecolor(_BG)
+
+    # Legend gradient bar
+    bar_ax = fig.add_axes([0.18, 0.38 / FIG_H, 0.64, 0.014])
+    grad = np.linspace(0, 1, 256).reshape(1, -1)
+    bar_ax.imshow(grad, aspect='auto', cmap='RdYlGn', origin='lower')
+    bar_ax.set_yticks([])
+    bar_ax.set_xticks([0, 128, 255])
+    bar_ax.set_xticklabels(['Underperforming', 'Flat', 'Outperforming'],
+                            color='#6e7681', fontsize=8)
+    bar_ax.tick_params(length=0)
+    for sp in bar_ax.spines.values():
+        sp.set_visible(False)
+
+    fig.savefig(chart_path, dpi=160, bbox_inches='tight', facecolor=_BG)
+    plt.close('all')
+
+    top_gainer = max(perf_today, key=perf_today.get)
+    top_loser  = min(perf_today, key=perf_today.get)
+
+    compare_lines = []
+    if perf_yesterday:
+        for sector in labels:
+            if sector in perf_yesterday:
+                delta = perf_today[sector] - perf_yesterday[sector]
+                compare_lines.append(
+                    f"{sector}: today {perf_today[sector]:+.2f}% vs yesterday "
+                    f"{perf_yesterday[sector]:+.2f}% (\u0394{delta:+.2f}%)"
+                )
+
+    return {
+        "success": (
+            f"US sector heatmap is attached below. "
+            f"Best: {top_gainer} ({perf_today[top_gainer]:+.2f}%). "
+            f"Worst: {top_loser} ({perf_today[top_loser]:+.2f}%)."
+        ),
+        "today": perf_today,
+        "yesterday": perf_yesterday,
+        "comparison": compare_lines,
+    }
