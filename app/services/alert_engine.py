@@ -31,8 +31,13 @@ _INDEX_ALIASES = {
     "NASDAQ100":  "^NDX",
     "NASDAQ 100": "^NDX",
     "NASDAQ":     "^IXIC",
+    "NDX":        "^NDX",       # ← ADD THIS
+    "QQQ":        "^NDX",       # ← ADD THIS — LLM sometimes passes ETF proxy
     "SP500":      "^GSPC",
     "S&P500":     "^GSPC",
+    "S&P 500":    "^GSPC",
+    "SPY":        "^GSPC",      # ← ADD THIS
+    "IVV":        "^GSPC",      # ← ADD THIS
 }
 
 
@@ -548,7 +553,7 @@ def check_active_alerts(db, bot_send_fn) -> int:
             # Extract the history dataframe and pass it to the formatter
             hist = price_histories.get(ticker)
             msg = format_trigger_message(alert, current, hist=hist)
-            bot_send_fn(alert.telegram_id, msg)  # scheduler calls this
+            bot_send_fn(alert.telegram_id, msg, alert.alert_type, alert.ticker)  # scheduler calls this
             triggered_count += 1
 
             if alert.is_recurring:

@@ -136,12 +136,12 @@ async def _check_and_send_alerts(bot):
 
     db = SessionLocal()
     try:
-        def _send_fn(telegram_id: str, text: str):
+        def _send_fn(telegram_id: str, text: str, alert_type: str = "", ticker: str = ""):
             """
             Sync wrapper — the alert engine is sync; scheduler is async.
             We collect messages and send after the sync check completes.
             """
-            _pending_alert_messages.append((telegram_id, text))
+            _pending_alert_messages.append((telegram_id, text, alert_type, ticker))
 
         _pending_alert_messages.clear()
         check_active_alerts(db, _send_fn)
@@ -152,11 +152,26 @@ async def _check_and_send_alerts(bot):
         db.close()
 
     # Now actually send the messages (async)
-    for telegram_id, text in _pending_alert_messages:
+    for telegram_id, text, alert_type, ticker in _pending_alert_messages:
         db2 = SessionLocal()
         try:
-            if _is_allowed_recipient(db2, telegram_id):
-                await _push_message(bot, telegram_id, text)
+            if not _is_allowed_recipient(db2, telegram_id):
+                continue
+            await _push_message(bot, telegram_id, text)
+
+            # For RSI alerts, auto-attach the RSI chart so the user sees WHY it fired
+            if alert_type in ("RSI_OVERSOLD", "RSI_OVERBOUGHT"):
+                try:
+                    import os
+                    from app.services.chart_engine import generate_rsi_gauge
+                    chart_path = f"chart_{telegram_id}.png"
+                    result = generate_rsi_gauge(ticker, telegram_id, period="3mo")
+                    if "success" in result and os.path.exists(chart_path):
+                        with open(chart_path, "rb") as f:
+                            await bot.send_photo(chat_id=int(telegram_id), photo=f)
+                        os.remove(chart_path)
+                except Exception as exc:
+                    print(f"[Scheduler] RSI chart send failed for {telegram_id}: {exc}")
         finally:
             db2.close()
 

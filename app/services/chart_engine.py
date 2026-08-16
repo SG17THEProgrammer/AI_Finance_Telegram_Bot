@@ -37,20 +37,22 @@ from app.services.financial_data import _normalize_symbol
 
 # ── Index aliases — identical to alert_engine.py so index charts work ─────────
 _INDEX_ALIASES = {
-    "NIFTY50": "^NSEI",
-    "NIFTY 50": "^NSEI",
-    "NIFTY": "^NSEI",
-    "BANKNIFTY": "^NSEBANK",
+    "NIFTY50":    "^NSEI",
+    "NIFTY 50":   "^NSEI",
+    "NIFTY":      "^NSEI",
+    "BANKNIFTY":  "^NSEBANK",
     "BANK NIFTY": "^NSEBANK",
-    "SENSEX": "^BSESN",
-    "NASDAQ100": "^NDX",
+    "SENSEX":     "^BSESN",
+    "NASDAQ100":  "^NDX",
     "NASDAQ 100": "^NDX",
-    "NASDAQ": "^IXIC",
-    "SP500": "^GSPC",
-    "S&P500": "^GSPC",
-    "S&P 500": "^GSPC",
-    "DOW": "^DJI",
-    "DOW JONES": "^DJI",
+    "NASDAQ":     "^IXIC",
+    "NDX":        "^NDX",       # ← ADD THIS
+    "QQQ":        "^NDX",       # ← ADD THIS — LLM sometimes passes ETF proxy
+    "SP500":      "^GSPC",
+    "S&P500":     "^GSPC",
+    "S&P 500":    "^GSPC",
+    "SPY":        "^GSPC",      # ← ADD THIS
+    "IVV":        "^GSPC",      # ← ADD THIS
 }
 
 # Representative tickers for sector heatmap
