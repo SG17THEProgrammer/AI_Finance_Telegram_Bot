@@ -267,11 +267,14 @@ def start_scheduler(bot):
         minutes=1, args=[bot]
     )
 
-    # Job 2+3: Alert checker — every 15 min
+    # Job 2+3: Alert checker — 15 min within this window :  9:15 AM IST to at 3:30 PM IST
     scheduler.add_job(
-        _check_and_send_alerts, "interval",
-        minutes=15, args=[bot]
-    )
+    _check_and_send_alerts, "cron",
+    day_of_week="mon-fri",
+    hour="9-15",        # 9 AM to 3 PM IST
+    minute="*/15",      # every 15 minutes within that window
+    args=[bot], timezone=IST
+)
 
     # Job 4: Daily baseline reset — 9:16 AM IST, Mon–Fri only
     scheduler.add_job(

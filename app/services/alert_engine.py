@@ -95,6 +95,21 @@ def _get_price_history(ticker: str, days: int = 30):
             continue
     return None
 
+_price_cache: dict[str, tuple[float, any]] = {}  # ticker → (timestamp, dataframe)
+_CACHE_TTL = 600  # 10 minutes
+
+def _get_price_history_cached(ticker: str, days: int = 30):
+    import time
+    now = time.time()
+    if ticker in _price_cache:
+        cached_at, cached_df = _price_cache[ticker]
+        if now - cached_at < _CACHE_TTL:
+            return cached_df
+    result = _get_price_history(ticker, days)
+    if result is not None:
+        _price_cache[ticker] = (now, result)
+    return result
+
 def _get_previous_close(ticker: str) -> float | None:
     """Fetches the actual previous day's closing price for baseline resets."""
     import yfinance as yf
@@ -494,7 +509,7 @@ def check_active_alerts(db, bot_send_fn) -> int:
     current_prices  = {}   # ticker → float (latest close)
 
     for ticker in unique_tickers:
-        hist = _get_price_history(ticker, days=30)  # ← "30d" not "2d"
+        hist = _get_price_history_cached(ticker, days=30)  # ← "30d" not "2d"
         if hist is not None and not hist.empty:
             price_histories[ticker] = hist
             current_prices[ticker] = float(hist["Close"].iloc[-1])
@@ -558,8 +573,8 @@ def check_active_alerts(db, bot_send_fn) -> int:
 
             if alert.is_recurring:
                 # Re-arm for next check; for RSI alerts, disarm until RSI exits zone
-                if alert.alert_type in ("RSI_OVERSOLD", "RSI_OVERBOUGHT", "TRAILING_DAYS", "LAGGED_PERCENT_DROP"):
-                    alert.armed = 0  # disarmed until RSI normalises
+                # if alert.alert_type in ("RSI_OVERSOLD", "RSI_OVERBOUGHT", "TRAILING_DAYS", "LAGGED_PERCENT_DROP"):
+                    alert.armed = 0  # disarm ALL recurring alerts after firing
             else:
                 alert.is_active = 0  # one-shot: deactivate after firing
 
@@ -580,7 +595,7 @@ def re_arm_recurring_alerts(db) -> int:
     disarmed = db.query(Alert).filter(
         Alert.is_active == 1,
         Alert.armed == 0,
-        Alert.alert_type.in_(["RSI_OVERSOLD", "RSI_OVERBOUGHT", "TRAILING_DAYS", "LAGGED_PERCENT_DROP"]),
+        Alert.alert_type.in_(["RSI_OVERSOLD", "RSI_OVERBOUGHT", "TRAILING_DAYS", "LAGGED_PERCENT_DROP", "PERCENT_DROP", "PERCENT_GAIN"]),
     ).all()
 
     if not disarmed:
@@ -634,6 +649,12 @@ def re_arm_recurring_alerts(db) -> int:
                 if not _check_lagged_percent(alert, price_histories):
                     alert.armed = 1
                     re_armed += 1
+            elif alert.alert_type in ("PERCENT_DROP", "PERCENT_GAIN"):
+                # Re-arm only after 24 hours (cooldown already enforced above).
+                # Condition check not needed — the daily baseline reset handles
+                # whether it will fire again next cycle.
+                alert.armed = 1
+                re_armed += 1
 
         except Exception as exc:
             print(f"[AlertEngine] Error re-arming alert {alert.id}: {exc}")

@@ -470,6 +470,7 @@ _COMMAND_ALIASES = {
     "proile": "profile",
     "prifle": "profile",
     "prof": "profile",
+    "myprofile": "profile",
     # /start variants
     "begin": "start",
     "setup": "start",
@@ -496,7 +497,7 @@ _COMMAND_ALIASES = {
 # unknown command is sent. Keep this in sync with what's registered in
 # main.py and run_polling.py.
 _KNOWN_COMMANDS = [
-    "start", "profile", "myalerts", "allow", "remove", "allowed", "id"
+    "start", "profile", "myalerts", "id"
 ]
 
 
@@ -516,7 +517,7 @@ async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cmds = ", ".join(f"`/{c}`" for c in _KNOWN_COMMANDS)
         await _send(
             update,
-            f"I don't recognise `/{raw}`. Here are all my commands: {cmds}"
+            f"I don't recognise `/{raw}`. Here are the commands that you can use: {cmds}"
         )
 
 
