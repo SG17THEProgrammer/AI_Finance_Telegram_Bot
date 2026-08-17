@@ -13,3 +13,5 @@ uvicorn==0.52.1
 yfinance==1.5.2
 matplotlib==3.11.1
 mplfinance==0.12.10b0
+python-multipart==0.0.20
+numpy==2.3.2

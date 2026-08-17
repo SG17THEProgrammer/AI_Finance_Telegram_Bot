@@ -21,6 +21,11 @@ FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY", "")
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./atlas.db")
 PUBLIC_WEBHOOK_URL = os.getenv("PUBLIC_WEBHOOK_URL", "")
 
+# Only used for the temporary /admin/restore-db endpoint in main.py, to
+# manually restore a local SQLite backup onto a Railway volume when needed.
+# Leave unset to keep that endpoint disabled entirely.
+ADMIN_UPLOAD_TOKEN = os.getenv("ADMIN_UPLOAD_TOKEN", "")
+
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 

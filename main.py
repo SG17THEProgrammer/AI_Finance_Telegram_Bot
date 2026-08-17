@@ -8,27 +8,31 @@ Usage (after deployment, with PUBLIC_WEBHOOK_URL set in .env):
 """
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from app.bot.onboarding import onboarding_handler, profile_command
+from fastapi import FastAPI, Request, UploadFile, File, HTTPException
 from fastapi.responses import HTMLResponse
 
 # special Python class from the python-telegram-bot library. This class takes that giant, messy JSON payload and converts it into a clean, easy-to-use Python object.
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters
 
-from app.config import TELEGRAM_BOT_TOKEN, PUBLIC_WEBHOOK_URL
-from app.db import init_db, SessionLocal, get_or_create_user
-from app.handlers import start_command, handle_text, handle_voice, handle_photo, handle_document, allow_command, remove_command, allowed_command, id_command
-from app.google_oauth import exchange_code_for_tokens
-from app.scheduler import start_scheduler
+from app.config import TELEGRAM_BOT_TOKEN, PUBLIC_WEBHOOK_URL, ADMIN_UPLOAD_TOKEN
+from app.database.db import init_db, SessionLocal, get_or_create_user, engine, DATABASE_URL
+from app.bot.handlers import handle_text, handle_voice, handle_photo, handle_document, allow_command, remove_command, allowed_command, id_command, myalerts_command , unknown_command
+from app.integrations.google_oauth import exchange_code_for_tokens
+from app.scheduler.scheduler import start_scheduler
 
 # This takes your secret Telegram Token and creates the bot object.
 telegram_app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
 
-telegram_app.add_handler(CommandHandler("start", start_command))
+telegram_app.add_handler(onboarding_handler)
+telegram_app.add_handler(CommandHandler("profile", profile_command))
+telegram_app.add_handler(CommandHandler("myalerts", myalerts_command))
 telegram_app.add_handler(CommandHandler("allow", allow_command))
 telegram_app.add_handler(CommandHandler("remove", remove_command))
 telegram_app.add_handler(CommandHandler("allowed", allowed_command))
 
+telegram_app.add_handler(MessageHandler(filters.COMMAND, unknown_command))
 
 telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 telegram_app.add_handler(MessageHandler(filters.VOICE, handle_voice))
@@ -73,6 +77,59 @@ async def telegram_webhook(request: Request):
 @app.get("/")
 async def health():
     return {"status": "Atlas is alive"}
+
+
+def _sqlite_path_from_url(url: str) -> str:
+    """Extracts the filesystem path from a sqlite:/// URL. Raises if this
+    isn't actually a sqlite URL, since overwriting an arbitrary DB connection
+    string as if it were a file path would be dangerous."""
+    prefix = "sqlite:///"
+    if not url.startswith(prefix):
+        raise ValueError(f"DATABASE_URL is not a sqlite file URL: {url}")
+    return url[len(prefix):]
+
+
+@app.post("/admin/restore-db")
+async def restore_db(request: Request, file: UploadFile = File(...)):
+    """
+    TEMPORARY endpoint - restores a local SQLite backup onto the volume.
+    Disabled entirely unless ADMIN_UPLOAD_TOKEN is set on Railway. Remove
+    this endpoint (or unset the token) once you're done using it - a
+    permanent unauthenticated-by-default file-write endpoint is a real
+    security risk to leave in production.
+    """
+    if not ADMIN_UPLOAD_TOKEN:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    token = request.query_params.get("token")
+    if token != ADMIN_UPLOAD_TOKEN:
+        raise HTTPException(status_code=403, detail="Invalid token")
+
+    try:
+        target_path = _sqlite_path_from_url(DATABASE_URL)
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    contents = await file.read()
+    if not contents:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty")
+
+    # Close any open connections before overwriting the file out from under
+    # SQLAlchemy's connection pool - it will reconnect lazily on next use.
+    engine.dispose()
+
+    with open(target_path, "wb") as f:
+        f.write(contents)
+
+    # Apply any schema changes this codebase has that the restored backup
+    # predates (e.g. columns added since that backup was taken).
+    init_db()
+
+    return {
+        "status": "restored",
+        "path": target_path,
+        "bytes_written": len(contents),
+    }
 
 
 @app.get("/oauth2callback")

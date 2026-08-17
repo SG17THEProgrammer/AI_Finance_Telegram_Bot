@@ -1,7 +1,7 @@
 """Invite-only Telegram access control. Runtime allowlist is stored in SQLite."""
 from datetime import datetime, timezone
 from app.config import OWNER_TELEGRAM_IDS, OWNER_TELEGRAM_USERNAMES
-from app.db import AllowedUser
+from app.database.db import AllowedUser
 
 def _norm_username(username):
     if not username:

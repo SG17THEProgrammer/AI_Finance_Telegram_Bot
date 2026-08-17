@@ -5,7 +5,7 @@ Reads data from a Google Sheet the user has shared/connected access to.
 import re
 import httpx
 
-from app.google_oauth import get_access_token
+from app.integrations.google_oauth import get_access_token
 
 _SHEET_ID_PATTERN = re.compile(
     r"/spreadsheets/d/([a-zA-Z0-9_-]+)")

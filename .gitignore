@@ -4,6 +4,7 @@ __pycache__/
 venv/
 .venv/
 atlas.db
+atlas1.db
 *.db
 .DS_Store
 Atlas AI
@@ -16,3 +17,5 @@ features.txt
 folder_structure.txt
 railway connect.txt
 suggestions.txt
+suggestions1.txt
+next implementation.txt
