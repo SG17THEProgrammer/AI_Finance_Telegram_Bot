@@ -8,6 +8,8 @@ Hard rule: every function here returns an explicit "not found" style result
 when data can't be retrieved. NOTHING in this module ever invents a number.
 The LLM is instructed (system_prompt.py) to pass that uncertainty straight
 through to the user rather than filling the gap with a guess.
+
+SEC EDGAR is the online system used by the U.S. to collect and display public corporate financial filings. A CIK number is a unique 10-digit identification code assigned to every company, person, or organization that submits documents to that system
 """
 
 import logging
@@ -16,6 +18,7 @@ import yfinance as yf
 import os
 import matplotlib
 matplotlib.use('Agg') # CRITICAL: Prevents server crash on Linux
+# it renders purely in the background without needing a GUI framework
 import matplotlib.pyplot as plt
 import mplfinance as mpf
 import pandas as pd
@@ -63,7 +66,7 @@ def _normalize_symbol(query: str) -> str:
     symbol = query.strip().upper()
     return SYMBOL_ALIASES.get(symbol, symbol)
 
-
+# Central Index Key
 _cik_map_cache = None  # lazy-loaded ticker -> CIK map for SEC EDGAR
 
 
@@ -456,6 +459,7 @@ def generate_comparison_chart(queries: list, telegram_id: str, period: str = "6m
                 clean_close.index = clean_close.index.tz_localize(None)
             
             # 3. Normalize to percentage
+            # The backend takes the first day's closing price and uses the formula ((Close - first_price) / first_price) * 100 to convert all raw prices into Cumulative Percentage Growth. This levels the playing field."
             first_price = clean_close.iloc[0]
             pct_change = ((clean_close - first_price) / first_price) * 100
             
