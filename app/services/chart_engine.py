@@ -31,6 +31,8 @@ import matplotlib.gridspec as gridspec
 import matplotlib.colors as mcolors
 import mplfinance as mpf
 import yfinance as yf
+import logging
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 
 from app.services.financial_data import _normalize_symbol
 

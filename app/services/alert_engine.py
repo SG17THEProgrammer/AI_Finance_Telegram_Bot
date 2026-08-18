@@ -17,6 +17,8 @@ import numpy as np
 import yfinance as yf
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
+import logging
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 
 _IST = ZoneInfo("Asia/Kolkata")
 
@@ -509,6 +511,7 @@ def check_active_alerts(db, bot_send_fn) -> int:
     current_prices  = {}   # ticker → float (latest close)
 
     for ticker in unique_tickers:
+        ticker = _resolve_ticker(ticker)
         hist = _get_price_history_cached(ticker, days=30)  # ← "30d" not "2d"
         if hist is not None and not hist.empty:
             price_histories[ticker] = hist
@@ -518,6 +521,7 @@ def check_active_alerts(db, bot_send_fn) -> int:
 
     for alert in active_alerts:
         ticker = alert.ticker
+        ticker = _resolve_ticker(ticker)
         current = current_prices.get(ticker)
         triggered = False
 
