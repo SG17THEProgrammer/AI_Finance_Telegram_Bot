@@ -56,13 +56,15 @@ _GROQ_DAILY_LIMIT   = 14400  # groq free tier (~10 RPM * 60 * 24)
 # ── Shared helpers ─────────────────────────────────────────────────────────────
 
 async def _push_message(bot, chat_id: int | str, text: str):
-    """Send with Markdown, fall back to plain text."""
+    """Send with Markdown, fall back to stripped plain text (mirrors handlers._send)."""
     formatted = _to_telegram_markdown(text)
     try:
         await bot.send_message(chat_id=int(chat_id), text=formatted, parse_mode="Markdown")
     except Exception:
+        # Markdown failed — strip all formatting and send as plain text
+        from app.bot.handlers import _strip_markdown
         try:
-            await bot.send_message(chat_id=int(chat_id), text=text)
+            await bot.send_message(chat_id=int(chat_id), text=_strip_markdown(text))
         except Exception as exc:
             print(f"[Scheduler] Push failed for {chat_id}: {exc}")
 
