@@ -114,14 +114,83 @@ def _build_groq_messages(history_rows, current_user_message, system_instruction)
     return messages
 
 
+def _get_relevant_tools(user_message: str) -> list:
+    """
+    Returns only the tools likely needed for this message.
+    Keeps Groq payload under 8000 TPM by not sending all 22 tools every time.
+    Full tools list is ~3000 tokens — this trims it to ~400-800 tokens per request.
+    """
+    msg = user_message.lower()
+
+    # Always include these core tools
+    core = ["save_user_profile", "reset_conversation", "calculate"]
+
+    # Intent-based tool selection
+    if any(w in msg for w in ["quote", "price", "how is", "what is", "stock", "share"]):
+        core += ["get_stock_quote", "get_company_fundamentals"]
+
+    if any(w in msg for w in ["news", "headline", "happened", "why did", "what happened"]):
+        core += ["get_company_news"]
+
+    if any(w in msg for w in ["chart", "graph", "technical", "candlestick", "visual"]):
+        core += ["generate_candlestick_ma_chart", "generate_stock_chart"]
+
+    if any(w in msg for w in ["rsi", "oversold", "overbought", "buying zone"]):
+        core += ["generate_rsi_chart"]
+
+    if any(w in msg for w in ["sector", "heatmap", "market overview", "heat map"]):
+        core += ["generate_sector_heatmap", "generate_us_sector_heatmap"]
+
+    if any(w in msg for w in ["radar", "fundamental", "undervalued", "pe ratio", "valuation"]):
+        core += ["generate_fundamental_radar"]
+
+    if any(w in msg for w in ["support", "resistance", "where to buy", "entry", "level"]):
+        core += ["generate_support_resistance_chart"]
+
+    if any(w in msg for w in ["compare", "vs", "versus", "comparison"]):
+        core += ["generate_comparison_chart"]
+
+    if any(w in msg for w in ["alert", "notify", "tell me when", "let me know", "drop", "falls"]):
+        core += ["create_market_alert", "list_market_alerts", "delete_market_alert"]
+
+    if any(w in msg for w in ["trailing", "days in a row", "consecutive"]):
+        core += ["create_trailing_days_alert"]
+
+    if any(w in msg for w in ["lagged", "over 5 days", "over the week", "rolling"]):
+        core += ["create_lagged_percent_alert"]
+
+    if any(w in msg for w in ["delete", "cancel", "remove", "stop alert"]):
+        core += ["list_market_alerts", "delete_market_alert"]
+
+    if any(w in msg for w in ["sheet", "google", "spreadsheet"]):
+        core += ["connect_google_sheets", "read_google_sheet"]
+
+    if any(w in msg for w in ["sec", "filing", "10-k", "10-q", "edgar"]):
+        core += ["get_sec_filings"]
+
+    if any(w in msg for w in ["briefing", "update", "morning", "daily"]):
+        core += ["get_stock_quote", "get_company_news"]
+
+    # Deduplicate while preserving order
+    seen = set()
+    result = []
+    for t in core:
+        if t not in seen:
+            seen.add(t)
+            result.append(t)
+
+    # Filter TOOLS list to only matching names
+    return [t for t in TOOLS if t["function"]["name"] in result]
+
 def _get_reply_groq(db, telegram_id, history_rows, current_user_message, system_instruction):
     messages = _build_groq_messages(history_rows, current_user_message, system_instruction)
+    relevant_tools = _get_relevant_tools(current_user_message)
 
     for _ in range(MAX_TOOL_ROUNDS):
         completion = groq_client.chat.completions.create(
             model=GROQ_MODEL,
             messages=messages,
-            tools=TOOLS,
+            tools=relevant_tools,
             tool_choice="auto",
             temperature=0.6,
             max_tokens=1000,  # room for explicit "detailed report" requests

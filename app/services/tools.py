@@ -689,18 +689,19 @@ def execute_tool_call(db, telegram_id: str, tool_name: str, arguments: dict) -> 
     if tool_name == "list_market_alerts":
         from app.services.alert_engine import list_alerts
         alerts = list_alerts(db, telegram_id, active_only=True)
-        return json.dumps({
-            "alerts": [
-                {
-                    "id": a.id,
-                    "ticker": a.ticker,
-                    "alert_type": a.alert_type,
-                    "target_value": a.target_value,
-                    "baseline_price": a.baseline_price,
-                }
-                for a in alerts
-            ]
-        })
+        return json.dumps({"alerts": alerts})
+        # return json.dumps({
+        #     "alerts": [
+        #         {
+        #             "id": a.id,
+        #             "ticker": a.ticker,
+        #             "alert_type": a.alert_type,
+        #             "target_value": a.target_value,
+        #             "baseline_price": a.baseline_price,
+        #         }
+        #         for a in alerts
+        #     ]
+        # })
 
     if tool_name == "delete_market_alert":
         from app.services.alert_engine import delete_alert
