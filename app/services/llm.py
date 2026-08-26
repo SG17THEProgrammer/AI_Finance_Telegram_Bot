@@ -11,7 +11,8 @@ gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
 MAX_TOOL_ROUNDS = 4
-HISTORY_LIMIT = 8
+HISTORY_LIMIT = 8         # Gemini: large context, fine
+GROQ_HISTORY_LIMIT = 4    # Groq fallback: keep requests smaller
 
 
 # ── Gemini path ──────────────────────────────────────────────────────────────
@@ -106,7 +107,7 @@ def _get_reply_gemini(db, telegram_id, history_rows, current_user_message, syste
 
 def _build_groq_messages(history_rows, current_user_message, system_instruction):
     messages = [{"role": "system", "content": system_instruction}]
-    for row in history_rows[-HISTORY_LIMIT:]:
+    for row in history_rows[-GROQ_HISTORY_LIMIT:]:
         role = "assistant" if row.role == "assistant" else "user"
         messages.append({"role": role, "content": row.content})
     messages.append({"role": "user", "content": current_user_message})

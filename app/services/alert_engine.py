@@ -687,3 +687,19 @@ def list_alerts(db, telegram_id: str, active_only: bool = True) -> list:
         }
         for a in alerts
     ]
+
+def delete_alert(db, telegram_id: str, alert_id: int) -> dict:
+    """Deactivates an alert by ID. Only deletes alerts belonging to this user."""
+    from app.database.db import Alert
+
+    alert = db.query(Alert).filter(
+        Alert.id == alert_id,
+        Alert.telegram_id == str(telegram_id),
+    ).first()
+
+    if not alert:
+        return {"error": f"Alert #{alert_id} not found or doesn't belong to you."}
+
+    alert.is_active = 0
+    db.commit()
+    return {"deleted": True, "alert_id": alert_id, "ticker": alert.ticker}
