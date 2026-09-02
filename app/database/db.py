@@ -3,21 +3,20 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 from datetime import datetime, timezone
 from app.config import DATABASE_URL, TURSO_DATABASE_URL, TURSO_AUTH_TOKEN
 
-# ── Engine: use Turso if configured, fall back to local SQLite ──────────────
+# ── Engine: Turso if configured, local SQLite as fallback ─────────────────────
 if TURSO_DATABASE_URL and TURSO_AUTH_TOKEN:
-    # Turso/libSQL via SQLAlchemy-compatible URL
-    # libsql:// → sqlite+libsql:// for SQLAlchemy
-    _db_url = TURSO_DATABASE_URL.replace("libsql://", "sqlite+libsql://")
+    # Official Turso format: sqlite+libsql://your-db.turso.io?secure=true
+    # TURSO_DATABASE_URL from dashboard looks like: libsql://your-db.turso.io
+    # We strip the scheme and rebuild it correctly for SQLAlchemy
+    _host = TURSO_DATABASE_URL.replace("libsql://", "")
     engine = create_engine(
-        _db_url,
+        f"sqlite+libsql://{_host}?secure=true",
         connect_args={
             "auth_token": TURSO_AUTH_TOKEN,
-            "check_same_thread": False,
         },
     )
     print("[DB] Using Turso cloud database.")
 else:
-    # Local development fallback — keeps run_polling.py working unchanged
     engine = create_engine(
         DATABASE_URL,
         connect_args={"check_same_thread": False}

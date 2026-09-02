@@ -15,5 +15,4 @@ matplotlib==3.11.1
 mplfinance==0.12.10b0
 python-multipart==0.0.20
 numpy==2.3.2
-libsql-experimental
-libsqlalchemy==0.1.0
+sqlalchemy-libsql
