@@ -18,6 +18,7 @@ from app.database.db import SessionLocal, User, AllowedUser
 from app.config import OWNER_TELEGRAM_IDS
 from app.services.llm import get_reply
 from app.bot.handlers import build_profile_summary, _to_telegram_markdown
+from app.config import PUBLIC_WEBHOOK_URL
 
 IST = ZoneInfo("Asia/Kolkata")
 
@@ -260,6 +261,16 @@ async def _check_api_rate_limits(bot):
 
 # ── Scheduler startup ──────────────────────────────────────────────────────────
 
+async def _ping_self(public_url: str):
+    """Hits the health endpoint every 14 min to prevent Render from sleeping."""
+    import httpx
+    try:
+        async with httpx.AsyncClient() as client:
+            await client.get(f"{public_url}/", timeout=10)
+        print("[Scheduler] Keep-alive ping sent.")
+    except Exception as exc:
+        print(f"[Scheduler] Keep-alive ping failed: {exc}")
+
 def start_scheduler(bot):
     scheduler = AsyncIOScheduler(timezone=IST)
 
@@ -291,6 +302,15 @@ def start_scheduler(bot):
     minutes=60, args=[bot],
     misfire_grace_time=60
 )
+
+    # Job 5: Self ping to keep render awake — every 14 min
+    if PUBLIC_WEBHOOK_URL:
+        scheduler.add_job(
+        _ping_self, "interval",
+        minutes=14,
+        args=[PUBLIC_WEBHOOK_URL],
+    )        
+        print("[Scheduler] Keep-alive ping added (every 14 min).")
 
     scheduler.start()
     print("[Scheduler] Started: briefings (1 min), alerts (15 min), baseline reset (9:16 AM IST), rate monitor (60 min).")
