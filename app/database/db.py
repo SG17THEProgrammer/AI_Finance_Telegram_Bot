@@ -1,10 +1,28 @@
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, Float
 from sqlalchemy.orm import declarative_base, sessionmaker
 from datetime import datetime, timezone
+from app.config import DATABASE_URL, TURSO_DATABASE_URL, TURSO_AUTH_TOKEN
 
-from app.config import DATABASE_URL
+# ── Engine: Turso if configured, local SQLite as fallback ─────────────────────
+if TURSO_DATABASE_URL and TURSO_AUTH_TOKEN:
+    # Official Turso format: sqlite+libsql://your-db.turso.io?secure=true
+    # TURSO_DATABASE_URL from dashboard looks like: libsql://your-db.turso.io
+    # We strip the scheme and rebuild it correctly for SQLAlchemy
+    _host = TURSO_DATABASE_URL.replace("libsql://", "")
+    engine = create_engine(
+        f"sqlite+libsql://{_host}?secure=true",
+        connect_args={
+            "auth_token": TURSO_AUTH_TOKEN,
+        },
+    )
+    print("[DB] Using Turso cloud database.")
+else:
+    engine = create_engine(
+        DATABASE_URL,
+        connect_args={"check_same_thread": False}
+    )
+    print("[DB] Using local SQLite database.")
 
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 Base = declarative_base()
 
