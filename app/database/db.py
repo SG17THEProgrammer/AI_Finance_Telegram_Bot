@@ -25,7 +25,7 @@ Base = declarative_base()
 class User(Base):
     __tablename__ = "users"
 
-    id = Column(Integer, primary_key=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     telegram_id = Column(String, unique=True, index=True, nullable=False)
     first_name = Column(String, nullable=True)
     role = Column(String, nullable=True)            # e.g., Investor, Analyst
@@ -54,7 +54,7 @@ class User(Base):
 class Alert(Base):
     __tablename__ = "alerts"
  
-    id = Column(Integer, primary_key=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     telegram_id = Column(String, index=True, nullable=False)
     ticker = Column(String, nullable=False)
     alert_type = Column(String, nullable=False)      # PRICE_BELOW, PERCENT_DROP, RSI_OVERSOLD,
@@ -74,7 +74,7 @@ class Alert(Base):
 class AllowedUser(Base):
     __tablename__ = "allowed_users"
 
-    id = Column(Integer, primary_key=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     telegram_id = Column(String, unique=True, index=True, nullable=False)
     username = Column(String, nullable=True)
     first_name = Column(String, nullable=True)
@@ -85,7 +85,7 @@ class AllowedUser(Base):
 class Message(Base):
     __tablename__ = "messages"
 
-    id = Column(Integer, primary_key=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     telegram_id = Column(String, index=True, nullable=False)
     role = Column(String, nullable=False)   
     content = Column(Text, nullable=False)
