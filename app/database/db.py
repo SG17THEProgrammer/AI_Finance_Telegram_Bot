@@ -1,21 +1,16 @@
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, Float
 from sqlalchemy.orm import declarative_base, sessionmaker
 from datetime import datetime, timezone
-from app.config import DATABASE_URL, TURSO_DATABASE_URL, TURSO_AUTH_TOKEN
+from app.config import DATABASE_URL, SUPABASE_DATABASE_URL
 
 # ── Engine: Turso if configured, local SQLite as fallback ─────────────────────
-if TURSO_DATABASE_URL and TURSO_AUTH_TOKEN:
-    # Official Turso format: sqlite+libsql://your-db.turso.io?secure=true
-    # TURSO_DATABASE_URL from dashboard looks like: libsql://your-db.turso.io
-    # We strip the scheme and rebuild it correctly for SQLAlchemy
-    _host = TURSO_DATABASE_URL.replace("libsql://", "")
+if SUPABASE_DATABASE_URL:
     engine = create_engine(
-        f"sqlite+libsql://{_host}?secure=true",
-        connect_args={
-            "auth_token": TURSO_AUTH_TOKEN,
-        },
+        SUPABASE_DATABASE_URL,
+        pool_pre_ping=True,        # detects dropped connections automatically
+        pool_recycle=300,          # recycle connections every 5 min
     )
-    print("[DB] Using Turso cloud database.")
+    print("[DB] Using Supabase PostgreSQL database.")
 else:
     engine = create_engine(
         DATABASE_URL,
@@ -137,6 +132,7 @@ def _run_lightweight_migrations():
                 conn.commit()
                 print(f"[Migration] Added column {table}.{column}")
             except Exception:
+                conn.rollback()
                 pass  # Column already exists — safe to ignore
 
 
