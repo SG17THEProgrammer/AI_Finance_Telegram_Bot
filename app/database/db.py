@@ -1,21 +1,16 @@
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, Float
 from sqlalchemy.orm import declarative_base, sessionmaker
 from datetime import datetime, timezone
-from app.config import DATABASE_URL, TURSO_DATABASE_URL, TURSO_AUTH_TOKEN
+from app.config import DATABASE_URL, SUPABASE_DATABASE_URL
 
 # ── Engine: Turso if configured, local SQLite as fallback ─────────────────────
-if TURSO_DATABASE_URL and TURSO_AUTH_TOKEN:
-    # Official Turso format: sqlite+libsql://your-db.turso.io?secure=true
-    # TURSO_DATABASE_URL from dashboard looks like: libsql://your-db.turso.io
-    # We strip the scheme and rebuild it correctly for SQLAlchemy
-    _host = TURSO_DATABASE_URL.replace("libsql://", "")
+if SUPABASE_DATABASE_URL:
     engine = create_engine(
-        f"sqlite+libsql://{_host}?secure=true",
-        connect_args={
-            "auth_token": TURSO_AUTH_TOKEN,
-        },
+        SUPABASE_DATABASE_URL,
+        pool_pre_ping=True,        # detects dropped connections automatically
+        pool_recycle=300,          # recycle connections every 5 min
     )
-    print("[DB] Using Turso cloud database.")
+    print("[DB] Using Supabase PostgreSQL database.")
 else:
     engine = create_engine(
         DATABASE_URL,
@@ -30,7 +25,7 @@ Base = declarative_base()
 class User(Base):
     __tablename__ = "users"
 
-    id = Column(Integer, primary_key=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     telegram_id = Column(String, unique=True, index=True, nullable=False)
     first_name = Column(String, nullable=True)
     role = Column(String, nullable=True)            # e.g., Investor, Analyst
@@ -59,7 +54,7 @@ class User(Base):
 class Alert(Base):
     __tablename__ = "alerts"
  
-    id = Column(Integer, primary_key=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     telegram_id = Column(String, index=True, nullable=False)
     ticker = Column(String, nullable=False)
     alert_type = Column(String, nullable=False)      # PRICE_BELOW, PERCENT_DROP, RSI_OVERSOLD,
@@ -79,7 +74,7 @@ class Alert(Base):
 class AllowedUser(Base):
     __tablename__ = "allowed_users"
 
-    id = Column(Integer, primary_key=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     telegram_id = Column(String, unique=True, index=True, nullable=False)
     username = Column(String, nullable=True)
     first_name = Column(String, nullable=True)
@@ -90,7 +85,7 @@ class AllowedUser(Base):
 class Message(Base):
     __tablename__ = "messages"
 
-    id = Column(Integer, primary_key=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     telegram_id = Column(String, index=True, nullable=False)
     role = Column(String, nullable=False)   
     content = Column(Text, nullable=False)
@@ -137,6 +132,7 @@ def _run_lightweight_migrations():
                 conn.commit()
                 print(f"[Migration] Added column {table}.{column}")
             except Exception:
+                conn.rollback()
                 pass  # Column already exists — safe to ignore
 
 

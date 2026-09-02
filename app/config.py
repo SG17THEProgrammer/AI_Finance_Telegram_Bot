@@ -21,8 +21,10 @@ FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY", "")
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./atlas.db")
 PUBLIC_WEBHOOK_URL = os.getenv("PUBLIC_WEBHOOK_URL", "")
 
-TURSO_DATABASE_URL = os.getenv("TURSO_DATABASE_URL", "")  # libsql://your-db.turso.io
-TURSO_AUTH_TOKEN = os.getenv("TURSO_AUTH_TOKEN", "")
+# TURSO_DATABASE_URL = os.getenv("TURSO_DATABASE_URL", "")  # libsql://your-db.turso.io
+# TURSO_AUTH_TOKEN = os.getenv("TURSO_AUTH_TOKEN", "")
+
+SUPABASE_DATABASE_URL = os.getenv("SUPABASE_DATABASE_URL", "")
 
 # Only used for the temporary /admin/restore-db endpoint in main.py, to
 # manually restore a local SQLite backup onto a Railway volume when needed.
