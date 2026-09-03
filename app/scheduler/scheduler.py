@@ -304,13 +304,13 @@ def start_scheduler(bot):
 )
 
     # Job 5: Self ping to keep render awake — every 14 min
-    if PUBLIC_WEBHOOK_URL:
-        scheduler.add_job(
-        _ping_self, "interval",
-        minutes=14,
-        args=[PUBLIC_WEBHOOK_URL],
-    )        
-        print("[Scheduler] Keep-alive ping added (every 14 min).")
+    # if PUBLIC_WEBHOOK_URL:
+    #     scheduler.add_job(
+    #     _ping_self, "interval",
+    #     minutes=14,
+    #     args=[PUBLIC_WEBHOOK_URL],
+    # )        
+    #     print("[Scheduler] Keep-alive ping added (every 14 min).")
 
     scheduler.start()
     print("[Scheduler] Started: briefings (1 min), alerts (15 min), baseline reset (9:16 AM IST), rate monitor (60 min).")
