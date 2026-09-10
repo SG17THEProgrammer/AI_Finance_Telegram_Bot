@@ -12,7 +12,7 @@ groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
 MAX_TOOL_ROUNDS = 4
 HISTORY_LIMIT = 8         # Gemini: large context, fine
-GROQ_HISTORY_LIMIT = 4    # Groq fallback: keep requests smaller
+GROQ_HISTORY_LIMIT = 2    # Groq fallback: keep requests smaller
 
 
 # ── Gemini path ──────────────────────────────────────────────────────────────
@@ -106,11 +106,33 @@ def _get_reply_gemini(db, telegram_id, history_rows, current_user_message, syste
 # ── Groq fallback path ───────────────────────────────────────────────────────
 
 def _build_groq_messages(history_rows, current_user_message, system_instruction):
-    messages = [{"role": "system", "content": system_instruction}]
-    for row in history_rows[-GROQ_HISTORY_LIMIT:]:
+    """
+    Groq free tier = 8000 TPM hard cap.
+    Budget breakdown:
+      - Stripped system prompt: ~1500 tokens
+      - 2 history turns (capped):  ~400 tokens
+      - User message (capped):     ~300 tokens
+      - Relevant tools:            ~400-800 tokens
+      - Response budget:           ~500 tokens
+      Total:                       ~3200-3600 tokens — safely under 8000
+    """
+    # Take only the first 1800 chars of system prompt (~450 tokens)
+    # This keeps Atlas's identity, scope, and topic boundary rules
+    # which are in the first section — tool/chart/alert rules are dropped
+    # since Groq gets only the relevant tools anyway
+    stripped_system = system_instruction[:1800]
+
+    messages = [{"role": "system", "content": stripped_system}]
+
+    # Last 2 turns only, each capped at 300 chars
+    for row in history_rows[-2:]:
         role = "assistant" if row.role == "assistant" else "user"
-        messages.append({"role": role, "content": row.content})
-    messages.append({"role": "user", "content": current_user_message})
+        content = row.content[:300]
+        messages.append({"role": role, "content": content})
+
+    # Current message capped at 400 chars
+    messages.append({"role": "user", "content": current_user_message[:400]})
+
     return messages
 
 
