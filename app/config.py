@@ -15,11 +15,21 @@ GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 
 # Fallback chat model if Gemini is unavailable, plus used for voice transcription later
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
-GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
+GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
 
 FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY", "")
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./atlas.db")
 PUBLIC_WEBHOOK_URL = os.getenv("PUBLIC_WEBHOOK_URL", "")
+
+# TURSO_DATABASE_URL = os.getenv("TURSO_DATABASE_URL", "")  # libsql://your-db.turso.io
+# TURSO_AUTH_TOKEN = os.getenv("TURSO_AUTH_TOKEN", "")
+
+SUPABASE_DATABASE_URL = os.getenv("SUPABASE_DATABASE_URL", "")
+
+# Only used for the temporary /admin/restore-db endpoint in main.py, to
+# manually restore a local SQLite backup onto a Railway volume when needed.
+# Leave unset to keep that endpoint disabled entirely.
+ADMIN_UPLOAD_TOKEN = os.getenv("ADMIN_UPLOAD_TOKEN", "")
 
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")

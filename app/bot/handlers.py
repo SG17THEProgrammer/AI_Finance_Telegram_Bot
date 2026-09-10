@@ -8,10 +8,46 @@ from telegram.ext import ContextTypes
 from telegram.ext import CommandHandler
 import os
 
-from app.db import SessionLocal, get_or_create_user, save_message, get_recent_history
-from app.access_control import is_owner, is_allowed, record_allowed_user, allow_target, remove_target, allowed_list
-from app.llm import get_reply, get_reply_with_image, get_reply_with_document
-from app.media import transcribe_voice, extract_pdf_text
+from app.database.db import SessionLocal, get_or_create_user, save_message, get_recent_history
+from app.bot.access_control import is_owner, is_allowed, record_allowed_user, allow_target, remove_target, allowed_list
+from app.services.llm import get_reply, get_reply_with_image, get_reply_with_document
+from app.services.media import transcribe_voice, extract_pdf_text
+
+# ── User rate limiter ──────────────────────────────────────────────────────────
+import time
+from collections import defaultdict
+
+_rate_limit_store: dict[str, list[float]] = defaultdict(list)
+_RATE_LIMIT_MAX = 25        # max messages
+_RATE_LIMIT_WINDOW = 3600   # per 3600 seconds (1 hour)
+
+
+def _is_rate_limited(telegram_id: str) -> tuple[bool, int]:
+    """
+    Returns (is_limited, seconds_until_reset).
+    Cleans up old timestamps on each call — no background thread needed.
+    Owners (in OWNER_TELEGRAM_IDS) are always exempt.
+    """
+    from app.config import OWNER_TELEGRAM_IDS
+    if telegram_id in OWNER_TELEGRAM_IDS:
+        return False, 0
+
+    now = time.time()
+    window_start = now - _RATE_LIMIT_WINDOW
+
+    # Prune timestamps outside the window
+    _rate_limit_store[telegram_id] = [
+        t for t in _rate_limit_store[telegram_id] if t > window_start
+    ]
+
+    if len(_rate_limit_store[telegram_id]) >= _RATE_LIMIT_MAX:
+        oldest = min(_rate_limit_store[telegram_id])
+        reset_in = int(oldest + _RATE_LIMIT_WINDOW - now)
+        return True, max(reset_in, 1)
+
+    _rate_limit_store[telegram_id].append(now)
+    return False, 0
+
 
 WELCOME_MESSAGE = (
     "Hey, I'm Atlas 👋 — your AI finance analyst, right here on Telegram.\n\n"
@@ -45,14 +81,16 @@ def _is_negative(text: str) -> bool:
 
 def build_profile_summary(user) -> str:
     """A short block appended to the system prompt so the LLM knows what it
-    already knows about this user, and whether onboarding is done."""
+    already knows about this user, and applies SEBI-compliant risk guardrails."""
     name_part = f"Name: {user.first_name}. " if user.first_name else ""
     sheets_part = "Google Sheets: connected. " if user.google_refresh_token else "Google Sheets: not connected. "
 
     if not user.onboarded:
-        return f"USER PROFILE: {name_part}{sheets_part}Not onboarded yet. No other confirmed details so far."
+        return f"USER PROFILE: {name_part}{sheets_part}Not onboarded yet. Keep answers general and invite them to complete their profile with /start."
 
     parts = [f"USER PROFILE: {name_part}{sheets_part}Onboarded."]
+    
+    # Existing fields
     if user.role:
         parts.append(f"Role: {user.role}.")
     if user.sectors:
@@ -61,7 +99,103 @@ def build_profile_summary(user) -> str:
         parts.append(f"Watchlist: {user.watchlist}.")
     if user.briefing_time:
         parts.append(f"Preferred briefing time: {user.briefing_time}.")
-    return " ".join(parts)
+        
+    # NEW: Phase 1 Onboarding fields
+    if user.intent:
+        parts.append(f"Intent: {user.intent}.")
+    if user.experience_level:
+        parts.append(f"Experience: {user.experience_level}.")
+    if user.investment_horizon:
+        parts.append(f"Investment horizon: {user.investment_horizon}.")
+    if user.primary_goal:
+        parts.append(f"Goal: {user.primary_goal}.")
+    if user.preferred_markets:                                      # ADD THIS
+        parts.append(f"Preferred markets: {user.preferred_markets}.")  # ADD THIS
+        
+    risk = user.risk_profile
+    if risk:
+        parts.append(f"Risk Profile: {risk}.")
+        
+    summary = " ".join(parts)
+    
+    # --- SEBI GUARDRAILS ---
+    if risk:
+        summary += "\n\n=== DYNAMIC TAILORING & GUARDRAILS ===\n"
+        if risk.lower() == "conservative":
+            summary += "- SEBI GUARDRAIL (CONSERVATIVE): User has a CONSERVATIVE risk appetite. You MUST issue a clear risk warning BEFORE answering any questions about high-risk assets (Crypto, F&O/Options, Micro-caps). Emphasize capital preservation.\n"
+        elif risk.lower() == "moderate":
+            summary += "- SEBI GUARDRAIL (MODERATE): Balance growth with risk. Highlight downside risks alongside upside metrics.\n"
+        elif risk.lower() == "aggressive":
+            summary += "- SEBI GUARDRAIL (AGGRESSIVE): Accepts higher volatility. Provide deeper technicals but remind of stop-loss discipline.\n"
+
+    # --- GOAL-BASED FRAMING ---
+    goal = user.primary_goal
+    horizon = user.investment_horizon
+    if goal or horizon:
+        summary += "\n=== GOAL-BASED FRAMING (apply to every response) ===\n"
+
+        # Horizon-specific instruction
+        if horizon == "< 1 year":
+            summary += (
+                "- SHORT-TERM HORIZON (<1 year): Prioritise liquidity, capital safety, and near-term catalysts. "
+                "Avoid recommending illiquid or long-lock-up instruments. "
+                "Flag high volatility as a real risk given the short window.\n"
+            )
+        elif horizon == "1–3 years":
+            summary += (
+                "- MEDIUM-TERM HORIZON (1-3 years): Balance between growth and stability. "
+                "Suitable for large-cap equities, balanced mutual funds, and short-duration debt. "
+                "Flag instruments with lock-ins longer than the user's horizon.\n"
+            )
+        elif horizon == "3-5 years":
+            summary += (
+                "- MEDIUM-LONG HORIZON (3-5 years): Can absorb moderate volatility. "
+                "Diversified equity, SIPs, and sector plays are appropriate. "
+                "Compounding effects should be highlighted when relevant.\n"
+            )
+        elif horizon in ("5+ years", "5+ Years"):
+            summary += (
+                "- LONG-TERM HORIZON (5+ years): Full compounding runway. "
+                "Quality businesses, index exposure, and high-growth sectors are appropriate. "
+                "Short-term price swings are noise — frame them as entry opportunities, not threats.\n"
+            )
+
+        # Goal-specific instruction
+        if goal:
+            g = goal.lower()
+            if "car" in g or "purchase" in g or "house" in g or "wedding" in g or "buy" in g:
+                summary += (
+                    f"- GOAL ({goal}): This is a defined, time-bound purchase goal. "
+                    "Prioritise capital preservation as the target date approaches. "
+                    "Recommend SIPs or recurring deposits over volatile instruments. "
+                    "Always factor in whether the user has enough time to recover from a drawdown before their target date.\n"
+                )
+            elif "retirement" in g:
+                summary += (
+                    f"- GOAL (Retirement): Long-duration goal requiring inflation-beating returns over time. "
+                    "Recommend diversified equity + debt allocation. "
+                    "Highlight the importance of regular review and not panic-selling during downturns.\n"
+                )
+            elif "income" in g or "regular" in g:
+                summary += (
+                    f"- GOAL (Regular income): User needs cash flow, not just capital appreciation. "
+                    "Prioritise dividend-paying stocks, REITs, or debt instruments with regular payouts. "
+                    "Avoid recommending growth stocks that don't pay dividends as primary holdings.\n"
+                )
+            elif "wealth" in g or "creation" in g or "appreciation" in g or "capital" in g:
+                summary += (
+                    f"- GOAL ({goal}): Long-term wealth building. "
+                    "Quality equities, compounding, and SIPs are core strategies. "
+                    "Frame every analysis through the lens of long-term value, not short-term price action.\n"
+                )
+            else:
+                # Custom / freeform goal
+                summary += (
+                    f"- GOAL ({goal}): Always frame advice in the context of this specific goal. "
+                    "Ask yourself: does this recommendation actually move the user closer to '{goal}'?\n"
+                )
+
+    return summary
 
 
 # If you send a URL with underscores in it, Telegram will think you are trying to make the text italic, fail to parse it, and silently crash your bot.
@@ -278,6 +412,115 @@ async def id_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def myalerts_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await _deny_if_not_allowed(update):
+        return
+    from app.services.alert_engine import list_alerts
+
+    telegram_id = str(update.effective_user.id)
+    db = SessionLocal()
+    try:
+        alerts = list_alerts(db, telegram_id, active_only=True)
+    finally:
+        db.close()
+
+    if not alerts:
+        await update.effective_message.reply_text(
+            "You don't have any active alerts. Just ask me to alert you on something, "
+            "e.g. \"let me know if TCS drops 5%\"."
+        )
+        return
+
+    lines = ["🔔 *Your Active Alerts*\n"]
+    for a in alerts:
+        # Build the alert description
+        if a["alert_type"] in ("PERCENT_DROP", "PERCENT_GAIN") and a.get("baseline_price"):
+                try:
+                    desc = f"{a['alert_type']} {a['target_value']}% (from ₹{float(a['baseline_price']):,.2f})"
+                except (ValueError, TypeError):
+                    desc = f"{a['alert_type']} {a['target_value']}%"
+                if a.get("baseline_date"):
+                    desc += f" as of {a['baseline_date']}"
+        else:
+                desc = f"{a['alert_type']} {a['target_value']}"
+        
+        recurring_badge = " 🔄 *recurring*" if a.get("is_recurring") else ""
+        lines.append(f"#{a['id']} — {a['ticker']}: {desc}{recurring_badge}")
+        
+    lines.append("\nAsk me to cancel any of these by number whenever you like.")
+    await _send(update, "\n".join(lines))
+
+
+# Maps common typos/variants → the correct command.
+# Manual is better than fuzzy-string here: you know your own commands and
+# the obvious ways users will mis-type them. Fuzzy scoring picks wrong
+# matches (e.g. /alerts → /allowed via shared characters) while this
+# approach is always deterministic and never surprising.
+_COMMAND_ALIASES = {
+    # /myalerts variants
+    "alerts": "myalerts",
+    "alert": "myalerts",
+    "myalert": "myalerts",
+    "setalert": "myalerts",
+    "setalerts": "myalerts",
+    "myalert": "myalerts",
+    # /profile variants
+    "profiles": "profile",
+    "profle": "profile",
+    "proile": "profile",
+    "prifle": "profile",
+    "prof": "profile",
+    "myprofile": "profile",
+    # /start variants
+    "begin": "start",
+    "setup": "start",
+    "init": "start",
+    "onboard": "start",
+    # /allowed variants
+    "allowlist": "allowed",
+    "whitelist": "allowed",
+    "users": "allowed",
+    # /allow variants
+    "adduser": "allow",
+    "add": "allow",
+    # /remove variants
+    "delete": "remove",
+    "ban": "remove",
+    "revoke": "remove",
+    # /id variants
+    "myid": "id",
+    "userid": "id",
+    "chatid": "id",
+}
+
+# All registered bot commands - used to find the closest match when an
+# unknown command is sent. Keep this in sync with what's registered in
+# main.py and run_polling.py.
+_KNOWN_COMMANDS = [
+    "start", "profile", "myalerts", "id"
+]
+
+
+async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles unrecognised commands. Looks up the alias map first for a
+    confident suggestion, falls back to listing all commands if nothing
+    matches — never stays silent."""
+    if await _deny_if_not_allowed(update):
+        return
+
+    raw = (update.message.text or "").split()[0].lstrip("/").lower().strip()
+    suggestion = _COMMAND_ALIASES.get(raw)
+
+    if suggestion:
+        await _send(update, f"Did you mean `/{suggestion}`?")
+    else:
+        cmds = ", ".join(f"`/{c}`" for c in _KNOWN_COMMANDS)
+        await _send(
+            update,
+            f"I don't recognise `/{raw}`. Here are the commands that you can use: {cmds}"
+        )
+
+
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if await _deny_if_not_allowed(update):
@@ -307,6 +550,21 @@ async def _handle_text_inner(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if await _deny_if_not_allowed(update):
         return
     telegram_id = str(update.effective_user.id)
+
+    # ── Rate limit check ──
+    limited, reset_in = _is_rate_limited(telegram_id)
+    if limited:
+        mins = reset_in // 60
+        secs = reset_in % 60
+        await update.message.reply_text(
+            f"⏱ You've sent {_RATE_LIMIT_MAX} messages this hour.\n\n"
+            f"Rate limit resets in *{mins}m {secs}s*. "
+            "This keeps Atlas responsive for everyone 🙏",
+            parse_mode="Markdown"
+        )
+        return
+    # ── End rate limit ──
+
     first_name = update.effective_user.first_name
     user_text = update.message.text
     chat_id = update.effective_chat.id
@@ -396,6 +654,19 @@ async def _handle_voice_inner(update: Update, context: ContextTypes.DEFAULT_TYPE
     if await _deny_if_not_allowed(update):
         return
     telegram_id = str(update.effective_user.id)
+     # ── Rate limit check ──
+    limited, reset_in = _is_rate_limited(telegram_id)
+    if limited:
+        mins = reset_in // 60
+        secs = reset_in % 60
+        await update.message.reply_text(
+            f"⏱ You've sent {_RATE_LIMIT_MAX} messages this hour.\n\n"
+            f"Rate limit resets in *{mins}m {secs}s*. "
+            "This keeps Atlas responsive for everyone 🙏",
+            parse_mode="Markdown"
+        )
+        return
+    # ── End rate limit ──
     first_name = update.effective_user.first_name
     chat_id = update.effective_chat.id
 
@@ -451,6 +722,19 @@ async def _handle_photo_inner(update: Update, context: ContextTypes.DEFAULT_TYPE
     if await _deny_if_not_allowed(update):
         return
     telegram_id = str(update.effective_user.id)
+     # ── Rate limit check ──
+    limited, reset_in = _is_rate_limited(telegram_id)
+    if limited:
+        mins = reset_in // 60
+        secs = reset_in % 60
+        await update.message.reply_text(
+            f"⏱ You've sent {_RATE_LIMIT_MAX} messages this hour.\n\n"
+            f"Rate limit resets in *{mins}m {secs}s*. "
+            "This keeps Atlas responsive for everyone 🙏",
+            parse_mode="Markdown"
+        )
+        return
+    # ── End rate limit ──
     first_name = update.effective_user.first_name
     chat_id = update.effective_chat.id
     caption = update.message.caption or ""
@@ -498,6 +782,19 @@ async def _handle_document_inner(update: Update, context: ContextTypes.DEFAULT_T
     if await _deny_if_not_allowed(update):
         return
     telegram_id = str(update.effective_user.id)
+     # ── Rate limit check ──
+    limited, reset_in = _is_rate_limited(telegram_id)
+    if limited:
+        mins = reset_in // 60
+        secs = reset_in % 60
+        await update.message.reply_text(
+            f"⏱ You've sent {_RATE_LIMIT_MAX} messages this hour.\n\n"
+            f"Rate limit resets in *{mins}m {secs}s*. "
+            "This keeps Atlas responsive for everyone 🙏",
+            parse_mode="Markdown"
+        )
+        return
+    # ── End rate limit ──
     first_name = update.effective_user.first_name
     chat_id = update.effective_chat.id
     caption = update.message.caption or ""

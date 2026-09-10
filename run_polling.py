@@ -10,9 +10,10 @@ Usage:
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters
 
 from app.config import TELEGRAM_BOT_TOKEN
-from app.db import init_db
-from app.handlers import start_command, handle_text, handle_voice, handle_photo, handle_document, allow_command, remove_command, allowed_command, id_command
-from app.scheduler import start_scheduler
+from app.database.db import init_db
+from app.bot.handlers import handle_text, handle_voice, handle_photo, handle_document, allow_command, remove_command, allowed_command, id_command, myalerts_command
+from app.bot.onboarding import onboarding_handler, profile_command
+from app.scheduler.scheduler import start_scheduler
 
 
 async def _post_init(application):
@@ -24,7 +25,9 @@ def main():
 
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).post_init(_post_init).build()
 
-    app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(onboarding_handler)
+    app.add_handler(CommandHandler("profile", profile_command))
+    app.add_handler(CommandHandler("myalerts", myalerts_command))
     app.add_handler(CommandHandler("allow", allow_command))
     app.add_handler(CommandHandler("remove", remove_command))
     app.add_handler(CommandHandler("allowed", allowed_command))
