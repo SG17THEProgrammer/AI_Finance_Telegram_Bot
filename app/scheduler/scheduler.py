@@ -93,9 +93,21 @@ async def _send_briefing(bot, user_id: int):
 
         profile_summary = build_profile_summary(user)
         try:
-            reply_text = get_reply(db, user.telegram_id, [], _get_briefing_prompt(), profile_summary)
+            reply_text = get_reply(
+                db, user.telegram_id, [], _get_briefing_prompt(), profile_summary
+            )
         except Exception as exc:
             print(f"[Briefing] Generation error for {user.telegram_id}: {exc}")
+            # Push a fallback message so it's never silent on Telegram
+            await _push_message(
+                bot,
+                user.telegram_id,
+                "⚠️ Your scheduled briefing couldn't be generated right now — "
+                "market data APIs may be temporarily unavailable. "
+                "Try asking me directly: 'Give me a market update'."
+            )
+            user.last_briefing_date = datetime.now(IST).strftime("%Y-%m-%d")
+            db.commit()
             return
 
         await _push_message(bot, user.telegram_id, reply_text)

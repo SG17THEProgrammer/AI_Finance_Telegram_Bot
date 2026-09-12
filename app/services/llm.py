@@ -108,30 +108,22 @@ def _get_reply_gemini(db, telegram_id, history_rows, current_user_message, syste
 def _build_groq_messages(history_rows, current_user_message, system_instruction):
     """
     Groq free tier = 8000 TPM hard cap.
-    Budget breakdown:
-      - Stripped system prompt: ~1500 tokens
-      - 2 history turns (capped):  ~400 tokens
-      - User message (capped):     ~300 tokens
-      - Relevant tools:            ~400-800 tokens
-      - Response budget:           ~500 tokens
-      Total:                       ~3200-3600 tokens — safely under 8000
+    We slice the COMBINED system_instruction (base prompt + profile summary)
+    to a hard character cap. 1800 chars ≈ 450 tokens, leaving room for
+    tools + history + user message + response within 8000 TPM.
     """
-    # Take only the first 1800 chars of system prompt (~450 tokens)
-    # This keeps Atlas's identity, scope, and topic boundary rules
-    # which are in the first section — tool/chart/alert rules are dropped
-    # since Groq gets only the relevant tools anyway
+    # Hard cap on the entire system instruction including profile injection
     stripped_system = system_instruction[:1800]
 
     messages = [{"role": "system", "content": stripped_system}]
 
-    # Last 2 turns only, each capped at 300 chars
+    # Last 2 turns only, each capped at 200 chars
     for row in history_rows[-2:]:
         role = "assistant" if row.role == "assistant" else "user"
-        content = row.content[:300]
-        messages.append({"role": role, "content": content})
+        messages.append({"role": role, "content": row.content[:200]})
 
-    # Current message capped at 400 chars
-    messages.append({"role": "user", "content": current_user_message[:400]})
+    # Current message capped at 300 chars
+    messages.append({"role": "user", "content": current_user_message[:300]})
 
     return messages
 
