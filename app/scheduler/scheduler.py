@@ -338,14 +338,14 @@ def start_scheduler(bot):
         misfire_grace_time=60
     )
 
-    # Job 6: Self ping to keep render awake — every 13 min when market is open
+    # Job 6: Self ping to keep render awake — every 12 min when market is open
     if PUBLIC_WEBHOOK_URL:
         # Indian market hours: 9:00 AM - 3:45 PM IST Mon-Fri
         scheduler.add_job(
             _ping_self, "cron",
             day_of_week="mon-fri",
             hour="9-15",
-            minute="*/13",
+            minute="*/12",
             args=[PUBLIC_WEBHOOK_URL],
             timezone=IST,
         )
@@ -354,7 +354,7 @@ def start_scheduler(bot):
             _ping_self, "cron",
             day_of_week="mon-fri",
             hour="19-23",
-            minute="*/13",
+            minute="*/12",
             args=[PUBLIC_WEBHOOK_URL],
             timezone=IST,
         )
@@ -368,7 +368,7 @@ def start_scheduler(bot):
             timezone=IST,
         )
 
-        print("[Scheduler] Market-hours keep-alive ping added (every 13 min).")
+        print("[Scheduler] Market-hours keep-alive ping added (every 12 min).")
 
     scheduler.start()
     print("[Scheduler] Started: briefings (1 min), alerts (15 min), baseline reset (9:16 AM IST), rate monitor (60 min).")
