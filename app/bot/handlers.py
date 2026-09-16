@@ -644,10 +644,16 @@ async def _handle_text_inner(update: Update, context: ContextTypes.DEFAULT_TYPE)
         try:
             with open(chart_path, "rb") as f:
                 await update.message.reply_photo(photo=f)
-            # Delete it instantly to save disk space!
-            os.remove(chart_path)
         except Exception as e:
             print(f"[Chart Error] {e}")
+        finally:
+        # Always delete and free memory regardless of send success/failure
+            if os.path.exists(chart_path):
+                os.remove(chart_path)
+            import matplotlib.pyplot as plt
+            import gc
+            plt.close('all')
+            gc.collect()  # force garbage collection immediately after chart delivery
 
 
 async def _handle_voice_inner(update: Update, context: ContextTypes.DEFAULT_TYPE):

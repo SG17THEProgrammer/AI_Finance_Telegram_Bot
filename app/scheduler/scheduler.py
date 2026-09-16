@@ -22,6 +22,7 @@ from app.config import PUBLIC_WEBHOOK_URL
 
 IST = ZoneInfo("Asia/Kolkata")
 
+
 def _get_briefing_prompt() -> str:
     """Returns a briefing prompt with the correct greeting based on current IST hour."""
     hour = datetime.now(IST).hour
@@ -45,13 +46,14 @@ def _get_briefing_prompt() -> str:
         "Use your tools for real current data. Keep it short and scannable."
     )
 
+
 # In-memory store — prevents duplicate rate alerts within a calendar day
 # Format: "gemini_50_2026-08-15" → True
 _RATE_ALERT_SENT: dict[str, bool] = {}
 
 # Approximate daily request limits — adjust to match your actual plan
 _GEMINI_DAILY_LIMIT = 1500   # gemini-2.0-flash free tier (~1500 req/day)
-_GROQ_DAILY_LIMIT   = 14400  # groq free tier (~10 RPM * 60 * 24)
+_GROQ_DAILY_LIMIT = 14400  # groq free tier (~10 RPM * 60 * 24)
 
 
 # ── Shared helpers ─────────────────────────────────────────────────────────────
@@ -129,11 +131,13 @@ async def _check_and_send_briefings(bot):
             .filter(
                 User.briefing_time.isnot(None),
                 User.briefing_time == current_time_str,
-                or_(User.last_briefing_date.is_(None), User.last_briefing_date != today_str),
+                or_(User.last_briefing_date.is_(None),
+                    User.last_briefing_date != today_str),
             )
             .all()
         )
-        candidates = [u for u in candidates if _is_allowed_recipient(db, u.telegram_id)]
+        candidates = [
+            u for u in candidates if _is_allowed_recipient(db, u.telegram_id)]
         user_ids = [u.id for u in candidates]
     finally:
         db.close()
@@ -156,11 +160,12 @@ async def _check_and_send_alerts(bot):
             Sync wrapper — the alert engine is sync; scheduler is async.
             We collect messages and send after the sync check completes.
             """
-            _pending_alert_messages.append((telegram_id, text, alert_type, ticker))
+            _pending_alert_messages.append(
+                (telegram_id, text, alert_type, ticker))
 
         _pending_alert_messages.clear()
         check_active_alerts(db, _send_fn)
-        
+
         # UPDATE THIS FUNCTION CALL
         re_arm_recurring_alerts(db)
     finally:
@@ -180,13 +185,15 @@ async def _check_and_send_alerts(bot):
                     import os
                     from app.services.chart_engine import generate_rsi_gauge
                     chart_path = f"chart_{telegram_id}.png"
-                    result = generate_rsi_gauge(ticker, telegram_id, period="3mo")
+                    result = generate_rsi_gauge(
+                        ticker, telegram_id, period="3mo")
                     if "success" in result and os.path.exists(chart_path):
                         with open(chart_path, "rb") as f:
                             await bot.send_photo(chat_id=int(telegram_id), photo=f)
                         os.remove(chart_path)
                 except Exception as exc:
-                    print(f"[Scheduler] RSI chart send failed for {telegram_id}: {exc}")
+                    print(
+                        f"[Scheduler] RSI chart send failed for {telegram_id}: {exc}")
         finally:
             db2.close()
 
@@ -227,7 +234,8 @@ async def _check_api_rate_limits(bot):
     today_str = datetime.now(IST).strftime("%Y-%m-%d")
 
     try:
-        today_start = datetime.now(IST).replace(hour=0, minute=0, second=0, microsecond=0)
+        today_start = datetime.now(IST).replace(
+            hour=0, minute=0, second=0, microsecond=0)
         today_count = (
             db.query(Message)
             .filter(
@@ -283,6 +291,7 @@ async def _ping_self(public_url: str):
     except Exception as exc:
         print(f"[Scheduler] Keep-alive ping failed: {exc}")
 
+
 def start_scheduler(bot):
     scheduler = AsyncIOScheduler(timezone=IST)
 
@@ -292,14 +301,28 @@ def start_scheduler(bot):
         minutes=1, args=[bot]
     )
 
-    # Job 2+3: Alert checker — 15 min within this window :  9:15 AM IST to at 3:30 PM IST
+    # Job 2+3: Alert checker — 15 min within this window
+
+    # Indian market hours: 9:15 AM - 3:30 PM IST
     scheduler.add_job(
-    _check_and_send_alerts, "cron",
-    day_of_week="mon-fri",
-    hour="9-15",        # 9 AM to 3 PM IST
-    minute="*/15",      # every 15 minutes within that window
-    args=[bot], timezone=IST
-)
+        _check_and_send_alerts, "cron",
+        day_of_week="mon-fri",
+        hour="9-15", minute="*/15",
+        args=[bot], timezone=IST
+    )
+    # US market hours IST: 7:00 PM - 2:00 AM IST (covers DST)
+    scheduler.add_job(
+        _check_and_send_alerts, "cron",
+        day_of_week="mon-fri",
+        hour="19-23", minute="*/15",
+        args=[bot], timezone=IST
+    )
+    scheduler.add_job(
+        _check_and_send_alerts, "cron",
+        day_of_week="mon-fri",
+        hour="0-2", minute="*/15",
+        args=[bot], timezone=IST
+    )
 
     # Job 4: Daily baseline reset — 9:16 AM IST, Mon–Fri only
     scheduler.add_job(
@@ -310,42 +333,42 @@ def start_scheduler(bot):
 
     # Job 5: API rate monitor — every 60 min
     scheduler.add_job(
-    _check_api_rate_limits, "interval",
-    minutes=60, args=[bot],
-    misfire_grace_time=60
-)
+        _check_api_rate_limits, "interval",
+        minutes=60, args=[bot],
+        misfire_grace_time=60
+    )
 
-    # Job 6: Self ping to keep render awake — every 13 min when market is open 
+    # Job 6: Self ping to keep render awake — every 13 min when market is open
     if PUBLIC_WEBHOOK_URL:
         # Indian market hours: 9:00 AM - 3:45 PM IST Mon-Fri
         scheduler.add_job(
-        _ping_self, "cron",
-        day_of_week="mon-fri",
-        hour="9-15",
-        minute="*/12",
-        args=[PUBLIC_WEBHOOK_URL],
-        timezone=IST,
-    )
+            _ping_self, "cron",
+            day_of_week="mon-fri",
+            hour="9-15",
+            minute="*/13",
+            args=[PUBLIC_WEBHOOK_URL],
+            timezone=IST,
+        )
     # US market hours IST: 7:00 PM - 2:00 AM IST Mon-Fri (covers DST too)
         scheduler.add_job(
-        _ping_self, "cron",
-        day_of_week="mon-fri",
-        hour="19-23",
-        minute="*/12",
-        args=[PUBLIC_WEBHOOK_URL],
-        timezone=IST,
-    )
+            _ping_self, "cron",
+            day_of_week="mon-fri",
+            hour="19-23",
+            minute="*/13",
+            args=[PUBLIC_WEBHOOK_URL],
+            timezone=IST,
+        )
     # US market late hours crossing midnight: 12:00 AM - 2:00 AM IST
         scheduler.add_job(
-        _ping_self, "cron",
-        day_of_week="mon-fri",
-        hour="0-2",
-        minute="*/12",
-        args=[PUBLIC_WEBHOOK_URL],
-        timezone=IST,
-    )
+            _ping_self, "cron",
+            day_of_week="mon-fri",
+            hour="0-2",
+            minute="*/12",
+            args=[PUBLIC_WEBHOOK_URL],
+            timezone=IST,
+        )
 
-        print("[Scheduler] Keep-alive ping added (every 12 min).")
+        print("[Scheduler] Market-hours keep-alive ping added (every 13 min).")
 
     scheduler.start()
     print("[Scheduler] Started: briefings (1 min), alerts (15 min), baseline reset (9:16 AM IST), rate monitor (60 min).")
