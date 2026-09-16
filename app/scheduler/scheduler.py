@@ -282,7 +282,7 @@ async def _check_api_rate_limits(bot):
 # ── Scheduler startup ──────────────────────────────────────────────────────────
 
 async def _ping_self(public_url: str):
-    """Hits the health endpoint every 14 min to prevent Render from sleeping."""
+    """Hits the health endpoint every 12 min to prevent Render from sleeping."""
     import httpx
     try:
         async with httpx.AsyncClient() as client:

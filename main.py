@@ -75,6 +75,7 @@ async def telegram_webhook(request: Request):
 
 
 @app.get("/")
+@app.head("/")
 async def health():
     return {"status": "Atlas is alive"}
 
