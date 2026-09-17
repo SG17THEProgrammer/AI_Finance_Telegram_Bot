@@ -3,10 +3,18 @@ app/scheduler/scheduler.py
 
 Background jobs for Atlas:
   1. Daily briefings       — every 1 min, checks if any user's briefing_time matches now
-  2. Alert checker         — every 15 min during market hours
-  3. RSI re-armer          — every 15 min alongside alert checker
-  4. Daily baseline reset  — 9:16 AM IST weekdays (after NSE open)
+  2. Alert checker         — every 15 min during Indian (9:15 AM–3:30 PM IST) and
+                             US (7:00 PM–2:00 AM IST) market hours, Mon–Fri
+  3. RSI re-armer          — runs alongside alert checker (same cycle)
+  4. Daily baseline reset  — 9:16 AM IST weekdays (just after NSE open)
   5. API rate monitor      — every 60 min, notifies owner at 50/90/100% usage
+  6. Internal keep-alive   — every 12 min while server is already awake, to prevent
+                             Render from spinning down mid-session. Does NOT wake a
+                             sleeping server — that is handled externally by cron-job.org,
+                             which hits this server 3 minutes before each market window:
+                               • 9:12 AM IST  → cron: 42 3 * * 1-5  (UTC)
+                               • 6:57 PM IST  → cron: 27 13 * * 1-5 (UTC)
+                               • 11:57 PM IST → cron: 27 18 * * 1-5 (UTC)
 """
 
 from datetime import datetime
@@ -47,24 +55,23 @@ def _get_briefing_prompt() -> str:
     )
 
 
-# In-memory store — prevents duplicate rate alerts within a calendar day
-# Format: "gemini_50_2026-08-15" → True
+# In-memory store — prevents duplicate rate alerts within a calendar day.
+# Key format: "gemini_50_2026-08-15" → True
 _RATE_ALERT_SENT: dict[str, bool] = {}
 
-# Approximate daily request limits — adjust to match your actual plan
+# Approximate daily request limits — adjust to match your actual API plan.
 _GEMINI_DAILY_LIMIT = 1500   # gemini-2.0-flash free tier (~1500 req/day)
-_GROQ_DAILY_LIMIT = 14400  # groq free tier (~10 RPM * 60 * 24)
+_GROQ_DAILY_LIMIT   = 14400  # groq free tier (~10 RPM × 60 min × 24 hr)
 
 
 # ── Shared helpers ─────────────────────────────────────────────────────────────
 
 async def _push_message(bot, chat_id: int | str, text: str):
-    """Send with Markdown, fall back to stripped plain text (mirrors handlers._send)."""
+    """Send with Markdown formatting, fall back to plain text if Telegram rejects it."""
     formatted = _to_telegram_markdown(text)
     try:
         await bot.send_message(chat_id=int(chat_id), text=formatted, parse_mode="Markdown")
     except Exception:
-        # Markdown failed — strip all formatting and send as plain text
         from app.bot.handlers import _strip_markdown
         try:
             await bot.send_message(chat_id=int(chat_id), text=_strip_markdown(text))
@@ -73,7 +80,7 @@ async def _push_message(bot, chat_id: int | str, text: str):
 
 
 def _is_allowed_recipient(db, telegram_id: str) -> bool:
-    """Only push to users who are on the allowlist (or are owner)."""
+    """Only push messages to users on the allowlist (owners are always included)."""
     if telegram_id in OWNER_TELEGRAM_IDS:
         return True
     return db.query(AllowedUser).filter(AllowedUser.telegram_id == telegram_id).first() is not None
@@ -100,7 +107,6 @@ async def _send_briefing(bot, user_id: int):
             )
         except Exception as exc:
             print(f"[Briefing] Generation error for {user.telegram_id}: {exc}")
-            # Push a fallback message so it's never silent on Telegram
             await _push_message(
                 bot,
                 user.telegram_id,
@@ -120,6 +126,11 @@ async def _send_briefing(bot, user_id: int):
 
 
 async def _check_and_send_briefings(bot):
+    """
+    Runs every minute. Checks if any onboarded user's saved briefing_time
+    matches the current IST minute — if so, generates and sends their briefing.
+    The last_briefing_date guard ensures each user gets at most one per day.
+    """
     now = datetime.now(IST)
     current_time_str = now.strftime("%H:%M")
     today_str = now.strftime("%Y-%m-%d")
@@ -136,8 +147,7 @@ async def _check_and_send_briefings(bot):
             )
             .all()
         )
-        candidates = [
-            u for u in candidates if _is_allowed_recipient(db, u.telegram_id)]
+        candidates = [u for u in candidates if _is_allowed_recipient(db, u.telegram_id)]
         user_ids = [u.id for u in candidates]
     finally:
         db.close()
@@ -146,32 +156,36 @@ async def _check_and_send_briefings(bot):
         await _send_briefing(bot, user_id)
 
 
-# ── Job 2 + 3: Alert checker + RSI re-armer ──────────────────────────────────
+# ── Job 2 + 3: Alert checker + RSI re-armer ───────────────────────────────────
+
+# Collects alert messages from the sync alert engine before sending them async.
+_pending_alert_messages: list[tuple[str, str, str, str]] = []
+
 
 async def _check_and_send_alerts(bot):
-    """Checks all active alerts and pushes notifications for triggered ones."""
-    # UPDATE THIS IMPORT
+    """
+    Batch-checks all active alerts and pushes Telegram notifications for any
+    that have triggered. Also re-arms recurring alerts (RSI, trailing, lagged)
+    once their condition exits the trigger zone.
+
+    Runs every 15 min during market hours (Indian + US windows, Mon–Fri).
+    The alert engine itself is synchronous, so messages are collected first
+    and sent after the sync block completes.
+    """
     from app.services.alert_engine import check_active_alerts, re_arm_recurring_alerts
 
     db = SessionLocal()
     try:
         def _send_fn(telegram_id: str, text: str, alert_type: str = "", ticker: str = ""):
-            """
-            Sync wrapper — the alert engine is sync; scheduler is async.
-            We collect messages and send after the sync check completes.
-            """
-            _pending_alert_messages.append(
-                (telegram_id, text, alert_type, ticker))
+            _pending_alert_messages.append((telegram_id, text, alert_type, ticker))
 
         _pending_alert_messages.clear()
         check_active_alerts(db, _send_fn)
-
-        # UPDATE THIS FUNCTION CALL
         re_arm_recurring_alerts(db)
     finally:
         db.close()
 
-    # Now actually send the messages (async)
+    # Send collected alert messages asynchronously
     for telegram_id, text, alert_type, ticker in _pending_alert_messages:
         db2 = SessionLocal()
         try:
@@ -179,35 +193,32 @@ async def _check_and_send_alerts(bot):
                 continue
             await _push_message(bot, telegram_id, text)
 
-            # For RSI alerts, auto-attach the RSI chart so the user sees WHY it fired
+            # For RSI alerts, auto-attach the RSI chart so the user sees why it fired
             if alert_type in ("RSI_OVERSOLD", "RSI_OVERBOUGHT"):
                 try:
                     import os
                     from app.services.chart_engine import generate_rsi_gauge
                     chart_path = f"chart_{telegram_id}.png"
-                    result = generate_rsi_gauge(
-                        ticker, telegram_id, period="3mo")
+                    result = generate_rsi_gauge(ticker, telegram_id, period="3mo")
                     if "success" in result and os.path.exists(chart_path):
                         with open(chart_path, "rb") as f:
                             await bot.send_photo(chat_id=int(telegram_id), photo=f)
                         os.remove(chart_path)
                 except Exception as exc:
-                    print(
-                        f"[Scheduler] RSI chart send failed for {telegram_id}: {exc}")
+                    print(f"[Scheduler] RSI chart send failed for {telegram_id}: {exc}")
         finally:
             db2.close()
 
 
-_pending_alert_messages: list[tuple[str, str]] = []
-
-
-# ── Job 4: Daily baseline reset for recurring index PERCENT alerts ─────────────
+# ── Job 4: Daily baseline reset ────────────────────────────────────────────────
 
 async def _reset_index_baselines(bot):
     """
-    Runs at 9:16 AM IST on weekdays, just after NSE market open.
+    Runs at 9:16 AM IST on weekdays, one minute after NSE market open.
     Resets baseline_price on all recurring PERCENT_DROP/GAIN index alerts
-    so "alert if Nifty drops 0.5% today" always uses today's open price.
+    (Nifty, Sensex, BankNifty, Nasdaq, S&P500) to the previous day's close,
+    so percentage alerts always measure today's intraday move, not the move
+    since the alert was originally created.
     """
     from app.services.alert_engine import reset_daily_baselines
     db = SessionLocal()
@@ -220,13 +231,14 @@ async def _reset_index_baselines(bot):
         db.close()
 
 
-# ── Job 5: API rate limit monitor — owner-only alerts ─────────────────────────
+# ── Job 5: API rate limit monitor ─────────────────────────────────────────────
 
 async def _check_api_rate_limits(bot):
     """
-    Estimates today's LLM usage from the messages DB table.
-    Sends Telegram alert to OWNER_TELEGRAM_IDS at 50%, 90%, and 100% of daily limit.
-    Uses assistant message count as a proxy for API calls (1 assistant reply ≈ 1 call).
+    Runs every 60 min. Estimates today's LLM usage from the messages table
+    (assistant reply count ≈ API call count) and sends a Telegram alert to
+    all owner IDs at 50%, 90%, and 100% of the daily limit.
+    Only the highest threshold crossed is alerted per day (no stacking).
     """
     from app.database.db import Message
 
@@ -234,8 +246,7 @@ async def _check_api_rate_limits(bot):
     today_str = datetime.now(IST).strftime("%Y-%m-%d")
 
     try:
-        today_start = datetime.now(IST).replace(
-            hour=0, minute=0, second=0, microsecond=0)
+        today_start = datetime.now(IST).replace(hour=0, minute=0, second=0, microsecond=0)
         today_count = (
             db.query(Message)
             .filter(
@@ -276,13 +287,20 @@ async def _check_api_rate_limits(bot):
                 for owner_id in OWNER_TELEGRAM_IDS:
                     await _push_message(bot, owner_id, msg)
 
-                break  # Only send the highest threshold hit, don't stack alerts
+                break  # Only alert the highest threshold hit, don't stack multiple
 
 
-# ── Scheduler startup ──────────────────────────────────────────────────────────
+# ── Job 6: Internal keep-alive ping ───────────────────────────────────────────
 
 async def _ping_self(public_url: str):
-    """Hits the health endpoint every 12 min to prevent Render from sleeping."""
+    """
+    Hits the health endpoint every 12 min to keep Render from spinning down
+    while the server is already awake during an active market window.
+
+    NOTE: This cannot wake a sleeping server — it only runs while the
+    scheduler process is live. Waking the server at the start of each market
+    window is handled externally by cron-job.org (see module docstring).
+    """
     import httpx
     try:
         async with httpx.AsyncClient() as client:
@@ -292,31 +310,33 @@ async def _ping_self(public_url: str):
         print(f"[Scheduler] Keep-alive ping failed: {exc}")
 
 
+# ── Scheduler startup ──────────────────────────────────────────────────────────
+
 def start_scheduler(bot):
     scheduler = AsyncIOScheduler(timezone=IST)
 
-    # Job 1: Briefings — every minute
+    # Job 1: Check briefing times every minute
     scheduler.add_job(
         _check_and_send_briefings, "interval",
         minutes=1, args=[bot]
     )
 
-    # Job 2+3: Alert checker — 15 min within this window
-
-    # Indian market hours: 9:15 AM - 3:30 PM IST
+    # Job 2+3: Alert checker + RSI re-armer — every 15 min during market hours
+    # Indian market: 9:15 AM – 3:30 PM IST
     scheduler.add_job(
         _check_and_send_alerts, "cron",
         day_of_week="mon-fri",
         hour="9-15", minute="*/15",
         args=[bot], timezone=IST
     )
-    # US market hours IST: 7:00 PM - 2:00 AM IST (covers DST)
+    # US market (evening leg): 7:00 PM – 11:59 PM IST
     scheduler.add_job(
         _check_and_send_alerts, "cron",
         day_of_week="mon-fri",
         hour="19-23", minute="*/15",
         args=[bot], timezone=IST
     )
+    # US market (midnight leg): 12:00 AM – 2:00 AM IST
     scheduler.add_job(
         _check_and_send_alerts, "cron",
         day_of_week="mon-fri",
@@ -331,45 +351,26 @@ def start_scheduler(bot):
         args=[bot], timezone=IST
     )
 
-    # Job 5: API rate monitor — every 60 min
+    # Job 5: API rate limit monitor — every 60 min
     scheduler.add_job(
         _check_api_rate_limits, "interval",
         minutes=60, args=[bot],
         misfire_grace_time=60
     )
 
-    # Job 6: Self ping to keep render awake — every 12 min when market is open
+    # Job 6: Internal keep-alive — every 12 min while server is live.
+    # External wake-ups (3 min before each market window) are handled by
     if PUBLIC_WEBHOOK_URL:
-        # Indian market hours: 9:00 AM - 3:45 PM IST Mon-Fri
         scheduler.add_job(
-            _ping_self, "cron",
-            day_of_week="mon-fri",
-            hour="9-15",
-            minute="*/12",
+            _ping_self, "interval",
+            minutes=12,
             args=[PUBLIC_WEBHOOK_URL],
-            timezone=IST,
         )
-    # US market hours IST: 7:00 PM - 2:00 AM IST Mon-Fri (covers DST too)
-        scheduler.add_job(
-            _ping_self, "cron",
-            day_of_week="mon-fri",
-            hour="19-23",
-            minute="*/12",
-            args=[PUBLIC_WEBHOOK_URL],
-            timezone=IST,
-        )
-    # US market late hours crossing midnight: 12:00 AM - 2:00 AM IST
-        scheduler.add_job(
-            _ping_self, "cron",
-            day_of_week="mon-fri",
-            hour="0-2",
-            minute="*/12",
-            args=[PUBLIC_WEBHOOK_URL],
-            timezone=IST,
-        )
-
-        print("[Scheduler] Market-hours keep-alive ping added (every 12 min).")
+        print("[Scheduler] Internal keep-alive ping: every 12 min while server is live.")
 
     scheduler.start()
-    print("[Scheduler] Started: briefings (1 min), alerts (15 min), baseline reset (9:16 AM IST), rate monitor (60 min).")
+    print(
+        "[Scheduler] Started: briefings (1 min), alerts (15 min, market hours), "
+        "baseline reset (9:16 AM IST), rate monitor (60 min)."
+    )
     return scheduler
