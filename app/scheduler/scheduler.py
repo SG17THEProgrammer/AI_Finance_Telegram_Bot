@@ -61,7 +61,7 @@ _RATE_ALERT_SENT: dict[str, bool] = {}
 
 # Approximate daily request limits — adjust to match your actual API plan.
 _GEMINI_DAILY_LIMIT = 1500   # gemini-2.0-flash free tier (~1500 req/day)
-_GROQ_DAILY_LIMIT   = 14400  # groq free tier (~10 RPM × 60 min × 24 hr)
+_GROQ_DAILY_LIMIT = 14400  # groq free tier (~10 RPM × 60 min × 24 hr)
 
 
 # ── Shared helpers ─────────────────────────────────────────────────────────────
@@ -147,7 +147,8 @@ async def _check_and_send_briefings(bot):
             )
             .all()
         )
-        candidates = [u for u in candidates if _is_allowed_recipient(db, u.telegram_id)]
+        candidates = [
+            u for u in candidates if _is_allowed_recipient(db, u.telegram_id)]
         user_ids = [u.id for u in candidates]
     finally:
         db.close()
@@ -177,7 +178,8 @@ async def _check_and_send_alerts(bot):
     db = SessionLocal()
     try:
         def _send_fn(telegram_id: str, text: str, alert_type: str = "", ticker: str = ""):
-            _pending_alert_messages.append((telegram_id, text, alert_type, ticker))
+            _pending_alert_messages.append(
+                (telegram_id, text, alert_type, ticker))
 
         _pending_alert_messages.clear()
         check_active_alerts(db, _send_fn)
@@ -199,13 +201,15 @@ async def _check_and_send_alerts(bot):
                     import os
                     from app.services.chart_engine import generate_rsi_gauge
                     chart_path = f"chart_{telegram_id}.png"
-                    result = generate_rsi_gauge(ticker, telegram_id, period="3mo")
+                    result = generate_rsi_gauge(
+                        ticker, telegram_id, period="3mo")
                     if "success" in result and os.path.exists(chart_path):
                         with open(chart_path, "rb") as f:
                             await bot.send_photo(chat_id=int(telegram_id), photo=f)
                         os.remove(chart_path)
                 except Exception as exc:
-                    print(f"[Scheduler] RSI chart send failed for {telegram_id}: {exc}")
+                    print(
+                        f"[Scheduler] RSI chart send failed for {telegram_id}: {exc}")
         finally:
             db2.close()
 
@@ -246,7 +250,8 @@ async def _check_api_rate_limits(bot):
     today_str = datetime.now(IST).strftime("%Y-%m-%d")
 
     try:
-        today_start = datetime.now(IST).replace(hour=0, minute=0, second=0, microsecond=0)
+        today_start = datetime.now(IST).replace(
+            hour=0, minute=0, second=0, microsecond=0)
         today_count = (
             db.query(Message)
             .filter(
@@ -365,6 +370,8 @@ def start_scheduler(bot):
             _ping_self, "interval",
             minutes=12,
             args=[PUBLIC_WEBHOOK_URL],
+            misfire_grace_time=60,  # ← ADD THIS: run even if up to 60s late
+            max_instances=1,        # ← ADD THIS: never run two pings at once
         )
         print("[Scheduler] Internal keep-alive ping: every 12 min while server is live.")
 
