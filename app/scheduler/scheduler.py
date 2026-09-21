@@ -297,15 +297,36 @@ async def _check_api_rate_limits(bot):
 
 # ── Job 6: Internal keep-alive ping ───────────────────────────────────────────
 
+def _is_in_market_window() -> bool:
+    """
+    Returns True if the current IST time falls within an active market window:
+      - Indian market:  Mon–Fri  09:15–15:30 IST
+      - US market eve:  Mon–Fri  19:00–23:59 IST
+      - US market night: Mon–Fri 00:00–02:00 IST (treat as continuation of prev evening)
+    """
+    now = datetime.now(IST)
+    if now.weekday() >= 5:   # Saturday=5, Sunday=6
+        return False
+    h, m = now.hour, now.minute
+    # Indian window
+    if (h == 9 and m >= 15) or (10 <= h <= 14) or (h == 15 and m <= 30):
+        return True
+    # US evening window
+    if 19 <= h <= 23:
+        return True
+    # US midnight window (00:00–02:00)
+    if h < 2 or (h == 2 and m == 0):
+        return True
+    return False
+
+
 async def _ping_self(public_url: str):
     """
-    Hits the health endpoint every 12 min to keep Render from spinning down
-    while the server is already awake during an active market window.
-
-    NOTE: This cannot wake a sleeping server — it only runs while the
-    scheduler process is live. Waking the server at the start of each market
-    window is handled externally by cron-job.org (see module docstring).
+    Hits the health endpoint — but ONLY if we are currently inside a market
+    window. This prevents all-day pinging when the server should be idle.
     """
+    if not _is_in_market_window():
+        return   # server is supposed to be idle — don't ping
     import httpx
     try:
         async with httpx.AsyncClient() as client:
@@ -313,6 +334,23 @@ async def _ping_self(public_url: str):
         print("[Scheduler] Keep-alive ping sent.")
     except Exception as exc:
         print(f"[Scheduler] Keep-alive ping failed: {exc}")
+
+
+async def _clear_yfinance_cache():
+    """Clears yfinance's internal ticker cache to prevent memory growth."""
+    try:
+        import yfinance as yf
+        if hasattr(yf, '_cache') and hasattr(yf._cache, 'clear'):
+            yf._cache.clear()
+        # Also clear the module-level Ticker cache if present
+        from yfinance import utils as _yf_utils
+        if hasattr(_yf_utils, 'get_json') and hasattr(_yf_utils.get_json, 'cache_clear'):
+            _yf_utils.get_json.cache_clear()
+    except Exception as exc:
+        print(f"[Scheduler] yfinance cache clear error (non-fatal): {exc}")
+    import gc
+    gc.collect()
+    print("[Scheduler] Memory cleanup done.")
 
 
 # ── Scheduler startup ──────────────────────────────────────────────────────────
@@ -363,21 +401,31 @@ def start_scheduler(bot):
         misfire_grace_time=60
     )
 
-    # Job 6: Internal keep-alive — every 12 min while server is live.
-    # External wake-ups (3 min before each market window) are handled by
+    # Job 6: Keep-alive — every 12 min, but the function itself checks the
+    # market window and returns immediately if we're outside it.
+    # This way: no external cron needed to "stop" pinging. The job runs
+    # silently during off-hours (negligible overhead) and only actually
+    # pings during the three daily windows.
     if PUBLIC_WEBHOOK_URL:
         scheduler.add_job(
             _ping_self, "interval",
             minutes=12,
             args=[PUBLIC_WEBHOOK_URL],
-            misfire_grace_time=60,  # ← ADD THIS: run even if up to 60s late
-            max_instances=1,        # ← ADD THIS: never run two pings at once
+            misfire_grace_time=60,
+            max_instances=1,
         )
-        print("[Scheduler] Internal keep-alive ping: every 12 min while server is live.")
+        print("[Scheduler] Keep-alive ping: every 12 min (market windows only).")
+
+    # Job 7: Memory cleanup — every 30 min to prevent yfinance RAM growth
+    scheduler.add_job(
+        _clear_yfinance_cache, "interval",
+        minutes=30,
+        misfire_grace_time=60,
+    )
 
     scheduler.start()
     print(
         "[Scheduler] Started: briefings (1 min), alerts (15 min, market hours), "
-        "baseline reset (9:16 AM IST), rate monitor (60 min)."
+        "baseline reset (9:16 AM IST), rate monitor (60 min), memory cleanup (30 min)."
     )
     return scheduler

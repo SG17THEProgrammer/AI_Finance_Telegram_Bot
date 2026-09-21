@@ -43,8 +43,17 @@ telegram_app.add_handler(MessageHandler(filters.Document.PDF, handle_document))
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db() # initializes the SQLite/Postgres database tables
-    await telegram_app.initialize()
-    await telegram_app.start()
+    import asyncio as _asyncio
+    for _attempt in range(5):
+        try:
+            await telegram_app.initialize()
+            await telegram_app.start()
+            break
+        except Exception as _exc:
+            print(f"[Startup] Telegram init attempt {_attempt+1} failed: {_exc}. Retrying in 10s...")
+            await _asyncio.sleep(10)
+    else:
+        raise RuntimeError("Telegram bot failed to initialize after 5 attempts.")
 
     # Telling Telegram exactly where to send new messages
     if PUBLIC_WEBHOOK_URL:
