@@ -173,6 +173,11 @@ async def _check_and_send_alerts(bot):
     The alert engine itself is synchronous, so messages are collected first
     and sent after the sync block completes.
     """
+    
+    # Hard gate — only run inside active market windows
+    if not _is_in_market_window():
+        return
+    
     from app.services.alert_engine import check_active_alerts, re_arm_recurring_alerts
 
     db = SessionLocal()
@@ -299,24 +304,42 @@ async def _check_api_rate_limits(bot):
 
 def _is_in_market_window() -> bool:
     """
-    Returns True if the current IST time falls within an active market window:
+    Returns True if current IST time is within an active market window:
       - Indian market:  Mon–Fri  09:15–15:30 IST
-      - US market eve:  Mon–Fri  19:00–23:59 IST
-      - US market night: Mon–Fri 00:00–02:00 IST (treat as continuation of prev evening)
+      - US market:      Mon–Fri  19:00–01:30 IST (crosses midnight)
+    
+    For the US window crossing midnight: Mon 19:00 to Tue 01:30 counts as
+    one continuous window. We check weekday on the evening side (must be
+    Mon–Fri) but allow the early morning continuation (00:00–01:30) even
+    on what is technically Tue–Sat, since it's a continuation of the
+    previous evening's session.
     """
     now = datetime.now(IST)
-    if now.weekday() >= 5:   # Saturday=5, Sunday=6
-        return False
     h, m = now.hour, now.minute
-    # Indian window
-    if (h == 9 and m >= 15) or (10 <= h <= 14) or (h == 15 and m <= 30):
+    wd = now.weekday()  # 0=Mon, 6=Sun
+
+    # Indian market window: 09:15–15:30, Mon–Fri only
+    if wd <= 4:  # Mon–Fri
+        in_india = (
+            (h == 9 and m >= 15) or
+            (10 <= h <= 14) or
+            (h == 15 and m <= 30)
+        )
+        if in_india:
+            return True
+
+    # US evening window: 19:00–23:59, Mon–Fri only
+    if wd <= 4 and 19 <= h <= 23:
         return True
-    # US evening window
-    if 19 <= h <= 23:
+
+    # US midnight continuation: 00:00–01:30
+    # This is Tue–Sat calendar-wise but is continuation of Mon–Fri evening
+    # so we allow it as long as the PREVIOUS day was a weekday (wd >= 1 means
+    # today is Tue–Sun, meaning yesterday was Mon–Sat; exclude Sunday night
+    # which would be wd==0 meaning today is Mon = yesterday was Sun)
+    if wd >= 1 and (h == 0 or (h == 1 and m <= 30)):
         return True
-    # US midnight window (00:00–02:00)
-    if h < 2 or (h == 2 and m == 0):
-        return True
+
     return False
 
 
@@ -380,44 +403,53 @@ def start_scheduler(bot):
         minutes=1, args=[bot]
     )
 
-    # Job 2+3: Alert checker + RSI re-armer — every 15 min during market hours
-    # Indian market: 9:15 AM – 3:30 PM IST
+    # ── Alert checker jobs : 2+3+4 — scoped exactly to market windows ─────────────────
+
+    # Indian market: 09:15 AM – 15:30 PM IST, Mon–Fri
+    # hour="9-15" covers 09:xx–15:xx; the function itself won't fire before
+    # 09:15 or after 15:30 because _is_in_market_window() gates it.
     scheduler.add_job(
         _check_and_send_alerts, "cron",
         day_of_week="mon-fri",
         hour="9-15", minute="*/15",
-        args=[bot], timezone=IST
+        args=[bot], timezone=IST,
+        misfire_grace_time=120,
     )
-    # US market (evening leg): 7:00 PM – 11:59 PM IST
+
+    # US market evening: 19:00 PM – 23:45 PM IST, Mon–Fri
     scheduler.add_job(
         _check_and_send_alerts, "cron",
         day_of_week="mon-fri",
         hour="19-23", minute="*/15",
-        args=[bot], timezone=IST
-    )
-    # US market (midnight leg): 12:00 AM – 2:00 AM IST
-    scheduler.add_job(
-        _check_and_send_alerts, "cron",
-        day_of_week="mon-fri",
-        hour="0-2", minute="*/15",
-        args=[bot], timezone=IST
+        args=[bot], timezone=IST,
+        misfire_grace_time=120,
     )
 
-    # Job 4: Daily baseline reset — 9:16 AM IST, Mon–Fri only
+    # US market midnight continuation: 00:00 AM – 01:30 AM IST
+    # Runs Tue–Sat calendar-wise (continuation of Mon–Fri evening session)
+    scheduler.add_job(
+        _check_and_send_alerts, "cron",
+        day_of_week="tue-sat",
+        hour="0-1", minute="*/15",
+        args=[bot], timezone=IST,
+        misfire_grace_time=120,
+    )
+
+    # Job 5: Daily baseline reset — 9:16 AM IST, Mon–Fri only
     scheduler.add_job(
         _reset_index_baselines, "cron",
         day_of_week="mon-fri", hour=9, minute=16,
         args=[bot], timezone=IST
     )
 
-    # Job 5: API rate limit monitor — every 60 min
+    # Job 6: API rate limit monitor — every 60 min
     scheduler.add_job(
         _check_api_rate_limits, "interval",
         minutes=60, args=[bot],
         misfire_grace_time=60
     )
 
-    # Job 6: Keep-alive — every 12 min, but the function itself checks the
+    # Job 7: Keep-alive — every 12 min, but the function itself checks the
     # market window and returns immediately if we're outside it.
     # This way: no external cron needed to "stop" pinging. The job runs
     # silently during off-hours (negligible overhead) and only actually
@@ -432,14 +464,14 @@ def start_scheduler(bot):
         )
         print("[Scheduler] Keep-alive ping: every 12 min (market windows only).")
 
-    # Job 7: Memory cleanup — every 30 min to prevent yfinance RAM growth
+    # Job 8: Memory cleanup — every 30 min to prevent yfinance RAM growth
     scheduler.add_job(
         _clear_yfinance_cache, "interval",
         minutes=30,
         misfire_grace_time=60,
     )
 
-        # Job 8: Wake server for Indian market window — 9:10 AM IST, Mon–Fri
+    # Job 9: Wake server for Indian market window — 9:10 AM IST, Mon–Fri
     # Sends a silent Telegram message to owner → Telegram delivers to webhook → Render wakes
     scheduler.add_job(
         _wake_server_for_market, "cron",
@@ -448,7 +480,7 @@ def start_scheduler(bot):
         misfire_grace_time=120,
     )
 
-    # Job 9: Wake server for US market window — 6:45 PM IST, Mon–Fri
+    # Job 10: Wake server for US market window — 6:45 PM IST, Mon–Fri
     scheduler.add_job(
         _wake_server_for_market, "cron",
         day_of_week="mon-fri", hour=18, minute=45,
