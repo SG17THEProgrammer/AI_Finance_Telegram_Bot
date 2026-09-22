@@ -22,6 +22,10 @@ from app.bot.handlers import handle_text, handle_voice, handle_photo, handle_doc
 from app.integrations.google_oauth import exchange_code_for_tokens
 from app.scheduler.scheduler import start_scheduler
 
+# Wake message handler — must be before the general text handler
+from app.bot.handlers import handle_wake_message
+from app.services.wake_service import WAKE_TAG
+
 # This takes your secret Telegram Token and creates the bot object.
 telegram_app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
 
@@ -34,6 +38,9 @@ telegram_app.add_handler(CommandHandler("allowed", allowed_command))
 
 telegram_app.add_handler(MessageHandler(filters.COMMAND, unknown_command))
 
+telegram_app.add_handler(
+    MessageHandler(filters.TEXT & filters.Regex(f"^{WAKE_TAG}$"), handle_wake_message)
+)
 telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 telegram_app.add_handler(MessageHandler(filters.VOICE, handle_voice))
 telegram_app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
@@ -71,6 +78,26 @@ async def lifespan(app: FastAPI):
 
 #This creates the API that runs on the internet
 app = FastAPI(lifespan=lifespan) 
+
+@app.post("/internal/wake")
+async def internal_wake(request: Request):
+    """
+    Wake endpoint for cron-job.org. Unlike the root health check, this
+    actively triggers an alert cycle so no market data is missed on cold start.
+    Protected by a token so it can't be abused.
+    """
+    token = request.query_params.get("token", "")
+    if not ADMIN_UPLOAD_TOKEN or token != ADMIN_UPLOAD_TOKEN:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    from app.scheduler.scheduler import _check_and_send_alerts, _is_in_market_window
+    import asyncio
+
+    is_window = _is_in_market_window()
+    if is_window:
+        asyncio.create_task(_check_and_send_alerts(telegram_app.bot))
+
+    return {"status": "awake", "in_market_window": is_window}
 
 
 @app.post("/webhook")

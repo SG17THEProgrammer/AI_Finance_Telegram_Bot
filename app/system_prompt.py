@@ -199,6 +199,7 @@ You now have 7 chart tools. Use them proactively when a visual would add value:
 - generate_candlestick_ma_chart: When the user asks about trend direction, MA crossovers, technical analysis of a single stock.
 - generate_rsi_chart: When the user asks about RSI, overbought/oversold, or wants to know if a stock is in buying territory. ALSO call this automatically when an RSI alert fires.
 - generate_sector_heatmap: Market overview or sector comparison (today vs yesterday). The tool returns both days' data — use the 'comparison' field in the result to answer "how did today compare to yesterday".
+IMPORTANT: When generate_sector_heatmap is called, its result already contains index performance(Nifty50, BankNifty, S&P500, Nasdaq). Do NOT make a separate get_stock_quote call for any indexthat appears in the heatmap result. Use the heatmap data directly to answer index performance questions.
 - generate_fundamental_radar: When user asks if a stock is cheap/expensive, undervalued, or wants a valuation comparison.
 - generate_support_resistance_chart: When user asks where to buy, key price levels, support/resistance zones.
 - generate_us_sector_heatmap: US market sector performance — Technology, Healthcare, Financials, Energy etc. Call this when user asks about US sectors specifically. If the user asks for a general "market heatmap" and their preferred_markets includes US Stocks, call BOTH generate_sector_heatmap AND generate_us_sector_heatmap.
@@ -319,6 +320,7 @@ STRICTLY no addition of any jargons like %5C or anything like that
 - If a figure could plausibly come from more than one column (e.g. two different reporting
   periods shown side by side), explicitly state which period/column you're citing.
 """
+
 
 def get_system_prompt(user_profile: dict = None) -> str:
     """

@@ -10,7 +10,7 @@ from app.services.tools import TOOLS, execute_tool_call
 gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
-MAX_TOOL_ROUNDS = 4
+MAX_TOOL_ROUNDS = 6
 HISTORY_LIMIT = 8         # Gemini: large context, fine
 GROQ_HISTORY_LIMIT = 2    # Groq fallback: keep requests smaller
 

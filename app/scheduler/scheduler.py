@@ -355,6 +355,22 @@ async def _clear_yfinance_cache():
 
 # ── Scheduler startup ──────────────────────────────────────────────────────────
 
+async def _wake_server_for_market():
+    """
+    Sends a silent Telegram message to the owner to wake the Render server.
+    Called 5 minutes before each market window opens.
+    The message is automatically deleted by handle_wake_message in handlers.py
+    once Render processes the incoming webhook update.
+    
+    This only runs when the scheduler itself is already running (server is warm).
+    Its purpose is to ensure the server stays warm ACROSS the gap between
+    the scheduler firing and the first alert cycle — and to wake a cold server
+    if it spun down between the scheduler's last ping and the market open.
+    """
+    from app.services.wake_service import send_wake_message
+    await send_wake_message()
+    print("[Scheduler] Wake signal sent for upcoming market window.")
+
 def start_scheduler(bot):
     scheduler = AsyncIOScheduler(timezone=IST)
 
@@ -421,6 +437,23 @@ def start_scheduler(bot):
         _clear_yfinance_cache, "interval",
         minutes=30,
         misfire_grace_time=60,
+    )
+
+        # Job 8: Wake server for Indian market window — 9:10 AM IST, Mon–Fri
+    # Sends a silent Telegram message to owner → Telegram delivers to webhook → Render wakes
+    scheduler.add_job(
+        _wake_server_for_market, "cron",
+        day_of_week="mon-fri", hour=9, minute=10,
+        timezone=IST,
+        misfire_grace_time=120,
+    )
+
+    # Job 9: Wake server for US market window — 6:45 PM IST, Mon–Fri
+    scheduler.add_job(
+        _wake_server_for_market, "cron",
+        day_of_week="mon-fri", hour=18, minute=45,
+        timezone=IST,
+        misfire_grace_time=120,
     )
 
     scheduler.start()

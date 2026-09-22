@@ -870,6 +870,25 @@ async def _safe_wrap(inner_fn, update: Update, context: ContextTypes.DEFAULT_TYP
         except Exception:
             pass
 
+async def handle_wake_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Silently deletes __ATLAS_WAKE__ messages sent by the scheduler to wake
+    the server. These are never shown to the user — they exist only to trigger
+    Render's webhook and bring the server online before a market window.
+    """
+    from app.services.wake_service import WAKE_TAG, delete_wake_message
+    
+    text = (update.message.text or "").strip()
+    if text != WAKE_TAG:
+        return  # not a wake message, ignore
+    
+    try:
+        chat_id = str(update.effective_chat.id)
+        msg_id = update.message.message_id
+        await delete_wake_message(chat_id, msg_id)
+        print(f"[WakeHandler] Wake message deleted (id={msg_id}). Server is warm.")
+    except Exception as exc:
+        print(f"[WakeHandler] Could not delete wake message: {exc}")
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _safe_wrap(_handle_text_inner, update, context, "handle_text")
