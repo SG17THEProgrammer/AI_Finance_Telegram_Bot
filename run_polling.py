@@ -14,6 +14,9 @@ from app.database.db import init_db
 from app.bot.handlers import handle_text, handle_voice, handle_photo, handle_document, allow_command, remove_command, allowed_command, id_command, myalerts_command
 from app.bot.onboarding import onboarding_handler, profile_command
 from app.scheduler.scheduler import start_scheduler
+# Wake message handler — must be before the general text handler
+from app.bot.handlers import handle_wake_message
+from app.services.wake_service import WAKE_TAG
 
 
 async def _post_init(application):
@@ -32,6 +35,9 @@ def main():
     app.add_handler(CommandHandler("remove", remove_command))
     app.add_handler(CommandHandler("allowed", allowed_command))
     app.add_handler(CommandHandler("id", id_command))
+    app.add_handler(
+    MessageHandler(filters.TEXT & filters.Regex(f"^{WAKE_TAG}$"), handle_wake_message)
+    )
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))

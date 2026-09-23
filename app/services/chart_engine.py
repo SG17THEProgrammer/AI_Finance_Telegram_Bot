@@ -20,21 +20,20 @@ FIX LOG:
   - Sector compare data available for LLM "today vs yesterday" queries
 """
 
+from app.services.financial_data import _normalize_symbol
+import logging
+import yfinance as yf
+import mplfinance as mpf
+import matplotlib.colors as mcolors
+import matplotlib.gridspec as gridspec
+import matplotlib.patches as mpatches
+import matplotlib.pyplot as plt
 import os
 import numpy as np
 import pandas as pd
 import matplotlib
 matplotlib.use('Agg')  # CRITICAL: prevents crash on Linux/Railway
-import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
-import matplotlib.gridspec as gridspec
-import matplotlib.colors as mcolors
-import mplfinance as mpf
-import yfinance as yf
-import logging
 logging.getLogger("yfinance").setLevel(logging.CRITICAL)
-
-from app.services.financial_data import _normalize_symbol
 
 
 # ── Index aliases — identical to alert_engine.py so index charts work ─────────
@@ -134,8 +133,10 @@ def _compute_rsi(close: pd.Series, period: int = 14) -> pd.Series:
     delta = close.diff()
     gain = delta.clip(lower=0)
     loss = -delta.clip(upper=0)
-    avg_gain = gain.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
-    avg_loss = loss.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
+    avg_gain = gain.ewm(
+        alpha=1 / period, min_periods=period, adjust=False).mean()
+    avg_loss = loss.ewm(
+        alpha=1 / period, min_periods=period, adjust=False).mean()
     rs = avg_gain / avg_loss.replace(0, np.nan)
     return 100 - (100 / (1 + rs))
 
@@ -150,7 +151,8 @@ def _style_axes(ax, title: str = ""):
         spine.set_edgecolor(_GRID)
     ax.grid(True, linestyle='--', alpha=0.3, color=_GRID)
     if title:
-        ax.set_title(title, color=_TEXT, fontsize=12, fontweight='bold', pad=10)
+        ax.set_title(title, color=_TEXT, fontsize=12,
+                     fontweight='bold', pad=10)
 
 
 # ── 1. Candlestick + 50-day & 200-day Moving Averages ─────────────────────────
@@ -207,7 +209,8 @@ def generate_candlestick_with_ma(query: str, telegram_id: str, period: str = "6m
         }
     )
 
-    display_name = query.upper() if query.upper() in _INDEX_ALIASES else resolved.split(".")[0]
+    display_name = query.upper() if query.upper(
+    ) in _INDEX_ALIASES else resolved.split(".")[0]
     fig, axes = mpf.plot(
         hist_display,
         type='candle',
@@ -232,17 +235,21 @@ def generate_candlestick_with_ma(query: str, telegram_id: str, period: str = "6m
 
     legend_patches = []
     if hist_display['MA50'].notna().any():
-        legend_patches.append(mpatches.Patch(color=_ACCENT_BLUE, label='50-day MA'))
+        legend_patches.append(mpatches.Patch(
+            color=_ACCENT_BLUE, label='50-day MA'))
     if hist_display['MA200'].notna().any():
-        legend_patches.append(mpatches.Patch(color=_ACCENT_ORANGE, label='200-day MA'))
+        legend_patches.append(mpatches.Patch(
+            color=_ACCENT_ORANGE, label='200-day MA'))
     if legend_patches:
         axes[0].legend(handles=legend_patches, loc='upper left',
                        facecolor=_PANEL, labelcolor=_TEXT, fontsize=9,
                        edgecolor=_GRID)
 
     # Annotate current MA values
-    last_ma50 = hist_display['MA50'].dropna().iloc[-1] if hist_display['MA50'].notna().any() else None
-    last_ma200 = hist_display['MA200'].dropna().iloc[-1] if hist_display['MA200'].notna().any() else None
+    last_ma50 = hist_display['MA50'].dropna(
+    ).iloc[-1] if hist_display['MA50'].notna().any() else None
+    last_ma200 = hist_display['MA200'].dropna(
+    ).iloc[-1] if hist_display['MA200'].notna().any() else None
     last_close = float(hist_display['Close'].iloc[-1])
 
     fig.savefig(chart_path, dpi=150, bbox_inches='tight', facecolor=_BG)
@@ -292,7 +299,8 @@ def generate_rsi_gauge(query: str, telegram_id: str, period: str = "3mo") -> dic
         return {"error": f"Not enough history to compute RSI for '{query}' (need at least 14 days)."}
 
     current_rsi = round(float(rsi.iloc[-1]), 1)
-    display_name = query.upper() if query.upper() in _INDEX_ALIASES else resolved.split(".")[0]
+    display_name = query.upper() if query.upper(
+    ) in _INDEX_ALIASES else resolved.split(".")[0]
 
     if current_rsi < 30:
         zone = "OVERSOLD 🟢 — Potential buying opportunity"
@@ -305,14 +313,18 @@ def generate_rsi_gauge(query: str, telegram_id: str, period: str = "3mo") -> dic
         rsi_color = '#FFC107'
 
     fig = plt.figure(figsize=(13, 8), facecolor=_BG)
-    gs = gridspec.GridSpec(2, 1, height_ratios=[1, 1.5], hspace=0.4, figure=fig)
+    gs = gridspec.GridSpec(2, 1, height_ratios=[
+                           1, 1.5], hspace=0.4, figure=fig)
 
     # ── RSI panel ──
     ax_rsi = fig.add_subplot(gs[0])
     _style_axes(ax_rsi)
-    ax_rsi.plot(rsi.index, rsi.values, color=rsi_color, linewidth=2, label='RSI-14')
-    ax_rsi.axhline(70, color=_RED, linestyle='--', linewidth=1.2, alpha=0.9, label='Overbought (70)')
-    ax_rsi.axhline(30, color=_GREEN, linestyle='--', linewidth=1.2, alpha=0.9, label='Oversold (30)')
+    ax_rsi.plot(rsi.index, rsi.values, color=rsi_color,
+                linewidth=2, label='RSI-14')
+    ax_rsi.axhline(70, color=_RED, linestyle='--', linewidth=1.2,
+                   alpha=0.9, label='Overbought (70)')
+    ax_rsi.axhline(30, color=_GREEN, linestyle='--',
+                   linewidth=1.2, alpha=0.9, label='Oversold (30)')
     ax_rsi.fill_between(rsi.index, rsi.values, 70,
                         where=(rsi.values > 70), alpha=0.2, color=_RED)
     ax_rsi.fill_between(rsi.index, rsi.values, 30,
@@ -369,14 +381,24 @@ def generate_sector_heatmap(telegram_id: str) -> dict:
             hist = hist[hist['Volume'] > 0]  # filter non-trading days
 
             if len(hist) >= 2:
-                prev_prev = float(hist['Close'].iloc[-2])
-                prev = float(hist['Close'].iloc[-1])
-                perf_today[sector] = round(((prev - prev_prev) / prev_prev) * 100, 2)
+                prev_prev = hist['Close'].iloc[-2]
+                prev = hist['Close'].iloc[-1]
+
+                # Skip if yfinance returned NaN for this ticker
+                if pd.isna(prev) or pd.isna(prev_prev) or prev_prev == 0:
+                    continue
+                perf_today[sector] = round(
+                    ((float(prev) - float(prev_prev)) / float(prev_prev)) * 100, 2
+                )
 
             if len(hist) >= 3:
-                pp = float(hist['Close'].iloc[-3])
-                p = float(hist['Close'].iloc[-2])
-                perf_yesterday[sector] = round(((p - pp) / pp) * 100, 2)
+                pp = hist['Close'].iloc[-3]
+                p = hist['Close'].iloc[-2]
+                if pd.isna(p) or pd.isna(pp) or pp == 0:
+                    continue
+                perf_yesterday[sector] = round(
+                    ((float(p) - float(pp)) / float(pp)) * 100, 2
+                )
         except Exception:
             pass
 
@@ -407,7 +429,8 @@ def generate_sector_heatmap(telegram_id: str) -> dict:
 
     # Colormap: red → yellow → green, symmetric around 0
     cmap = matplotlib.colormaps['RdYlGn']
-    max_abs = max(abs(values).max(), 0.5)  # at least 0.5% range so map isn't flat
+    # at least 0.5% range so map isn't flat
+    max_abs = max(abs(values).max(), 0.5)
     norm = mcolors.TwoSlopeNorm(vmin=-max_abs, vcenter=0, vmax=max_abs)
 
     for i, (label, val) in enumerate(zip(labels, values)):
@@ -534,29 +557,32 @@ def generate_fundamental_radar(query: str, telegram_id: str) -> dict:
 
     labels = list(metrics.keys())
     stock_raw = [v[0] if v[0] is not None else 0 for v in metrics.values()]
-    avg_raw   = [v[1] for v in metrics.values()]
+    avg_raw = [v[1] for v in metrics.values()]
 
     def _norm(val, avg):
         scale = avg * 2 if avg != 0 else 1
         return min(max((val / scale) * 100, 0), 100)
 
     stock_norm = [_norm(sv, av) for sv, av in zip(stock_raw, avg_raw)]
-    avg_norm   = [50.0] * len(labels)   # avg always = 50 after normalization
+    avg_norm = [50.0] * len(labels)   # avg always = 50 after normalization
 
     N = len(labels)
     angles = np.linspace(0, 2 * np.pi, N, endpoint=False).tolist()
     angles += angles[:1]
 
     stock_plot = stock_norm + stock_norm[:1]
-    avg_plot   = avg_norm   + avg_norm[:1]
+    avg_plot = avg_norm + avg_norm[:1]
 
-    fig, ax = plt.subplots(figsize=(9, 9), subplot_kw=dict(polar=True), facecolor=_BG)
+    fig, ax = plt.subplots(
+        figsize=(9, 9), subplot_kw=dict(polar=True), facecolor=_BG)
     ax.set_facecolor(_PANEL)
 
-    ax.plot(angles, stock_plot, 'o-', linewidth=2.2, color=_ACCENT_BLUE, label=symbol)
+    ax.plot(angles, stock_plot, 'o-', linewidth=2.2,
+            color=_ACCENT_BLUE, label=symbol)
     ax.fill(angles, stock_plot, alpha=0.2, color=_ACCENT_BLUE)
 
-    ax.plot(angles, avg_plot, 'o--', linewidth=1.8, color='#FFC107', label='Market Avg')
+    ax.plot(angles, avg_plot, 'o--', linewidth=1.8,
+            color='#FFC107', label='Market Avg')
     ax.fill(angles, avg_plot, alpha=0.08, color='#FFC107')
 
     ax.set_xticks(angles[:-1])
@@ -621,7 +647,8 @@ def generate_support_resistance(query: str, telegram_id: str, period: str = "6mo
         hist.index = hist.index.tz_localize(None)
 
     close = hist['Close'].dropna()
-    display_name = query.upper() if query.upper() in _INDEX_ALIASES else resolved.split(".")[0]
+    display_name = query.upper() if query.upper(
+    ) in _INDEX_ALIASES else resolved.split(".")[0]
 
     # ── Detect local extremes ──
     window = max(5, len(close) // 20)
@@ -663,10 +690,12 @@ def generate_support_resistance(query: str, telegram_id: str, period: str = "6mo
     )[:3]
 
     fig, ax = plt.subplots(figsize=(13, 6), facecolor=_BG)
-    _style_axes(ax, title=f"{display_name} — Auto Support & Resistance ({period})")
+    _style_axes(
+        ax, title=f"{display_name} — Auto Support & Resistance ({period})")
     ax.set_facecolor(_PANEL)
 
-    ax.plot(close.index, close.values, color='#90CAF9', linewidth=2, label='Price', zorder=3)
+    ax.plot(close.index, close.values, color='#90CAF9',
+            linewidth=2, label='Price', zorder=3)
     ax.fill_between(close.index, close.values, close.values.min(),
                     alpha=0.07, color='#90CAF9')
 
@@ -700,8 +729,10 @@ def generate_support_resistance(query: str, telegram_id: str, period: str = "6mo
     fig.savefig(chart_path, dpi=150, bbox_inches='tight', facecolor=_BG)
     plt.close('all')
 
-    s_str = ", ".join([f"{v:,.1f}" for _, v in supports]) if supports else "none detected"
-    r_str = ", ".join([f"{v:,.1f}" for _, v in resistances]) if resistances else "none detected"
+    s_str = ", ".join([f"{v:,.1f}" for _, v in supports]
+                      ) if supports else "none detected"
+    r_str = ", ".join([f"{v:,.1f}" for _, v in resistances]
+                      ) if resistances else "none detected"
 
     return {
         "success": (
@@ -713,6 +744,7 @@ def generate_support_resistance(query: str, telegram_id: str, period: str = "6mo
     }
 
 # ── 6. US Sector Heatmap ──────────────────────────────────────────────────────
+
 
 _US_SECTOR_TICKERS = {
     "Technology":   "XLK",
@@ -768,25 +800,35 @@ def generate_us_sector_heatmap(telegram_id: str) -> dict:
             hist = yf.Ticker(ticker).history(period="5d")
             hist = hist[hist['Volume'] > 0]
             if len(hist) >= 2:
-                prev     = float(hist['Close'].iloc[-1])
-                prev_prev = float(hist['Close'].iloc[-2])
-                perf_today[sector] = round(((prev - prev_prev) / prev_prev) * 100, 2)
+                prev = hist['Close'].iloc[-1]
+                prev_prev = hist['Close'].iloc[-2]
+                if pd.isna(prev) or pd.isna(prev_prev) or prev_prev == 0:
+                    continue
+                perf_today[sector] = round(
+                    ((float(prev) - float(prev_prev)) / float(prev_prev)) * 100, 2
+                )
+
             if len(hist) >= 3:
-                p  = float(hist['Close'].iloc[-2])
-                pp = float(hist['Close'].iloc[-3])
-                perf_yesterday[sector] = round(((p - pp) / pp) * 100, 2)
+                p = hist['Close'].iloc[-2]
+                pp = hist['Close'].iloc[-3]
+                if pd.isna(p) or pd.isna(pp) or pp == 0:
+                    continue
+                perf_yesterday[sector] = round(
+                    ((float(p) - float(pp)) / float(pp)) * 100, 2
+                )
+                
         except Exception:
             pass
 
     if not perf_today:
         return {"error": "Could not fetch US sector data. Market may be closed or APIs rate-limited."}
 
-    labels   = list(perf_today.keys())
-    values   = [perf_today[k] for k in labels]
-    max_abs  = max(abs(v) for v in values) or 1.0
+    labels = list(perf_today.keys())
+    values = [perf_today[k] for k in labels]
+    max_abs = max(abs(v) for v in values) or 1.0
 
-    COLS  = 4
-    ROWS  = int(np.ceil(len(labels) / COLS))
+    COLS = 4
+    ROWS = int(np.ceil(len(labels) / COLS))
     FIG_W = 14.0
     FIG_H = ROWS * 2.45 + 1.35
 
@@ -813,8 +855,10 @@ def generate_us_sector_heatmap(telegram_id: str) -> dict:
     for i, (label, val) in enumerate(zip(labels, values)):
         r_i, c_i = divmod(i, COLS)
         ax = fig.add_subplot(gs[r_i, c_i])
-        ax.set_xlim(0, 1); ax.set_ylim(0, 1)
-        ax.axis('off'); ax.set_facecolor(_BG)
+        ax.set_xlim(0, 1)
+        ax.set_ylim(0, 1)
+        ax.axis('off')
+        ax.set_facecolor(_BG)
 
         bg = _tile_bg(val, max_abs)
 
@@ -853,7 +897,8 @@ def generate_us_sector_heatmap(telegram_id: str) -> dict:
     for i in range(len(labels), ROWS * COLS):
         r_i, c_i = divmod(i, COLS)
         ax = fig.add_subplot(gs[r_i, c_i])
-        ax.axis('off'); ax.set_facecolor(_BG)
+        ax.axis('off')
+        ax.set_facecolor(_BG)
 
     # Legend gradient bar
     bar_ax = fig.add_axes([0.18, 0.30 / FIG_H, 0.64, 0.014])
@@ -862,7 +907,7 @@ def generate_us_sector_heatmap(telegram_id: str) -> dict:
     bar_ax.set_yticks([])
     bar_ax.set_xticks([0, 128, 255])
     bar_ax.set_xticklabels(['Underperforming', 'Flat', 'Outperforming'],
-                            color='#6e7681', fontsize=8)
+                           color='#6e7681', fontsize=8)
     bar_ax.tick_params(length=0)
     for sp in bar_ax.spines.values():
         sp.set_visible(False)
@@ -871,7 +916,7 @@ def generate_us_sector_heatmap(telegram_id: str) -> dict:
     plt.close('all')
 
     top_gainer = max(perf_today, key=perf_today.get)
-    top_loser  = min(perf_today, key=perf_today.get)
+    top_loser = min(perf_today, key=perf_today.get)
 
     compare_lines = []
     if perf_yesterday:

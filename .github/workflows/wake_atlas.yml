@@ -1,0 +1,44 @@
+name: Wake Atlas Bot
+
+on:
+  schedule:
+    # Indian market: 10 min before 9:00 AM IST pre-open
+    # 8:50 AM IST = 3:20 AM UTC, Mon-Fri
+    - cron: '20 3 * * 1-5'
+
+    # US market open: 10 min before 7:00 PM IST
+    # 6:50 PM IST = 1:20 PM UTC, Mon-Fri
+    - cron: '20 13 * * 1-5'
+
+jobs:
+  wake:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Send wake message to Atlas bot
+        run: |
+          pip install telethon
+
+          python - <<'EOF'
+          import asyncio
+          from telethon import TelegramClient
+          from telethon.sessions import StringSession
+
+          API_ID = "${{ secrets.TELEGRAM_API_ID }}"
+          API_HASH = "${{ secrets.TELEGRAM_API_HASH }}"
+          SESSION_STRING = "${{ secrets.TELETHON_SESSION }}"
+          BOT_USERNAME = "${{ secrets.BOT_USERNAME }}"
+
+          async def wake():
+              client = TelegramClient(
+                  StringSession(SESSION_STRING),
+                  api_id=int(API_ID),
+                  api_hash=API_HASH,
+              )
+
+              async with client:
+                  await client.send_message(BOT_USERNAME, "__ATLAS_WAKE__")
+                  print("Wake message sent successfully.")
+
+          asyncio.run(wake())
+          EOF

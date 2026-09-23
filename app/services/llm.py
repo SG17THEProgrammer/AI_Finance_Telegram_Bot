@@ -10,9 +10,9 @@ from app.services.tools import TOOLS, execute_tool_call
 gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
-MAX_TOOL_ROUNDS = 4
+MAX_TOOL_ROUNDS = 6
 HISTORY_LIMIT = 8         # Gemini: large context, fine
-GROQ_HISTORY_LIMIT = 4    # Groq fallback: keep requests smaller
+GROQ_HISTORY_LIMIT = 2    # Groq fallback: keep requests smaller
 
 
 # ── Gemini path ──────────────────────────────────────────────────────────────
@@ -106,11 +106,25 @@ def _get_reply_gemini(db, telegram_id, history_rows, current_user_message, syste
 # ── Groq fallback path ───────────────────────────────────────────────────────
 
 def _build_groq_messages(history_rows, current_user_message, system_instruction):
-    messages = [{"role": "system", "content": system_instruction}]
-    for row in history_rows[-GROQ_HISTORY_LIMIT:]:
+    """
+    Groq free tier = 8000 TPM hard cap.
+    We slice the COMBINED system_instruction (base prompt + profile summary)
+    to a hard character cap. 1800 chars ≈ 450 tokens, leaving room for
+    tools + history + user message + response within 8000 TPM.
+    """
+    # Hard cap on the entire system instruction including profile injection
+    stripped_system = system_instruction[:1800]
+
+    messages = [{"role": "system", "content": stripped_system}]
+
+    # Last 2 turns only, each capped at 200 chars
+    for row in history_rows[-2:]:
         role = "assistant" if row.role == "assistant" else "user"
-        messages.append({"role": role, "content": row.content})
-    messages.append({"role": "user", "content": current_user_message})
+        messages.append({"role": role, "content": row.content[:200]})
+
+    # Current message capped at 300 chars
+    messages.append({"role": "user", "content": current_user_message[:300]})
+
     return messages
 
 

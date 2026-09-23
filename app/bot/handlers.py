@@ -644,10 +644,16 @@ async def _handle_text_inner(update: Update, context: ContextTypes.DEFAULT_TYPE)
         try:
             with open(chart_path, "rb") as f:
                 await update.message.reply_photo(photo=f)
-            # Delete it instantly to save disk space!
-            os.remove(chart_path)
         except Exception as e:
             print(f"[Chart Error] {e}")
+        finally:
+        # Always delete and free memory regardless of send success/failure
+            if os.path.exists(chart_path):
+                os.remove(chart_path)
+            import matplotlib.pyplot as plt
+            import gc
+            plt.close('all')
+            gc.collect()  # force garbage collection immediately after chart delivery
 
 
 async def _handle_voice_inner(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -864,6 +870,25 @@ async def _safe_wrap(inner_fn, update: Update, context: ContextTypes.DEFAULT_TYP
         except Exception:
             pass
 
+async def handle_wake_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Silently deletes __ATLAS_WAKE__ messages sent by the scheduler to wake
+    the server. These are never shown to the user — they exist only to trigger
+    Render's webhook and bring the server online before a market window.
+    """
+    from app.services.wake_service import WAKE_TAG, delete_wake_message
+    
+    text = (update.message.text or "").strip()
+    if text != WAKE_TAG:
+        return  # not a wake message, ignore
+    
+    try:
+        chat_id = str(update.effective_chat.id)
+        msg_id = update.message.message_id
+        await delete_wake_message(chat_id, msg_id)
+        print(f"[WakeHandler] Wake message deleted (id={msg_id}). Server is warm.")
+    except Exception as exc:
+        print(f"[WakeHandler] Could not delete wake message: {exc}")
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _safe_wrap(_handle_text_inner, update, context, "handle_text")

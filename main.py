@@ -22,6 +22,10 @@ from app.bot.handlers import handle_text, handle_voice, handle_photo, handle_doc
 from app.integrations.google_oauth import exchange_code_for_tokens
 from app.scheduler.scheduler import start_scheduler
 
+# Wake message handler — must be before the general text handler
+from app.bot.handlers import handle_wake_message
+from app.services.wake_service import WAKE_TAG
+
 # This takes your secret Telegram Token and creates the bot object.
 telegram_app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
 
@@ -34,6 +38,9 @@ telegram_app.add_handler(CommandHandler("allowed", allowed_command))
 
 telegram_app.add_handler(MessageHandler(filters.COMMAND, unknown_command))
 
+telegram_app.add_handler(
+    MessageHandler(filters.TEXT & filters.Regex(f"^{WAKE_TAG}$"), handle_wake_message)
+)
 telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 telegram_app.add_handler(MessageHandler(filters.VOICE, handle_voice))
 telegram_app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
@@ -43,8 +50,17 @@ telegram_app.add_handler(MessageHandler(filters.Document.PDF, handle_document))
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db() # initializes the SQLite/Postgres database tables
-    await telegram_app.initialize()
-    await telegram_app.start()
+    import asyncio as _asyncio
+    for _attempt in range(5):
+        try:
+            await telegram_app.initialize()
+            await telegram_app.start()
+            break
+        except Exception as _exc:
+            print(f"[Startup] Telegram init attempt {_attempt+1} failed: {_exc}. Retrying in 10s...")
+            await _asyncio.sleep(10)
+    else:
+        raise RuntimeError("Telegram bot failed to initialize after 5 attempts.")
 
     # Telling Telegram exactly where to send new messages
     if PUBLIC_WEBHOOK_URL:
@@ -63,6 +79,26 @@ async def lifespan(app: FastAPI):
 #This creates the API that runs on the internet
 app = FastAPI(lifespan=lifespan) 
 
+@app.post("/internal/wake")
+async def internal_wake(request: Request):
+    """
+    Wake endpoint for cron-job.org. Unlike the root health check, this
+    actively triggers an alert cycle so no market data is missed on cold start.
+    Protected by a token so it can't be abused.
+    """
+    token = request.query_params.get("token", "")
+    if not ADMIN_UPLOAD_TOKEN or token != ADMIN_UPLOAD_TOKEN:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    from app.scheduler.scheduler import _check_and_send_alerts, _is_in_market_window
+    import asyncio
+
+    is_window = _is_in_market_window()
+    if is_window:
+        asyncio.create_task(_check_and_send_alerts(telegram_app.bot))
+
+    return {"status": "awake", "in_market_window": is_window}
+
 
 @app.post("/webhook")
 async def telegram_webhook(request: Request):
@@ -75,6 +111,7 @@ async def telegram_webhook(request: Request):
 
 
 @app.get("/")
+@app.head("/")
 async def health():
     return {"status": "Atlas is alive"}
 
