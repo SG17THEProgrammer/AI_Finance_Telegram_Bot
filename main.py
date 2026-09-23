@@ -35,13 +35,22 @@ telegram_app.add_handler(CommandHandler("myalerts", myalerts_command))
 telegram_app.add_handler(CommandHandler("allow", allow_command))
 telegram_app.add_handler(CommandHandler("remove", remove_command))
 telegram_app.add_handler(CommandHandler("allowed", allowed_command))
+telegram_app.add_handler(CommandHandler("id", id_command))
 
 telegram_app.add_handler(MessageHandler(filters.COMMAND, unknown_command))
 
 telegram_app.add_handler(
     MessageHandler(filters.TEXT & filters.Regex(f"^{WAKE_TAG}$"), handle_wake_message)
 )
-telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+
+# General text handler explicitly excludes the wake tag
+telegram_app.add_handler(
+    MessageHandler(
+        filters.TEXT & ~filters.COMMAND & ~filters.Regex(f"^{WAKE_TAG}$"),
+        handle_text
+    )
+)
+
 telegram_app.add_handler(MessageHandler(filters.VOICE, handle_voice))
 telegram_app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 telegram_app.add_handler(MessageHandler(filters.Document.PDF, handle_document))
