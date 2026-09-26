@@ -20,7 +20,7 @@ This works because:
 import httpx
 from app.config import TELEGRAM_BOT_TOKEN, OWNER_TELEGRAM_IDS
 
-WAKE_TAG = "__ATLAS_WAKE__"
+WAKE_TAG = "ATLAS_WAKE"
 _TELEGRAM_API = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 
 

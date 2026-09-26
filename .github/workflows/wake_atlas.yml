@@ -1,16 +1,19 @@
 name: Wake Atlas Bot
 
+# on:
+#   schedule:
+#     # Indian market: 10 min before 9:00 AM IST pre-open
+#     # 8:50 AM IST = 3:30 AM UTC, Mon-Fri
+#     - cron: '20 3 * * 1-5'
+
+#     # US market open: 10 min before 7:00 PM IST
+#     # 6:50 PM IST = 1:30 PM UTC, Mon-Fri
+#     - cron: '20 13 * * 1-5'
 on:
-  schedule:
-    # Indian market: 10 min before 9:00 AM IST pre-open
-    # 8:40 AM IST = 3:20 AM UTC, Mon-Fri
-    - cron: '10 3 * * 1-5'
-
-    # US market open: 10 min before 7:00 PM IST
-    # 6:40 PM IST = 1:20 PM UTC, Mon-Fri
-    - cron: '10 13 * * 1-5'
-
-  workflow_dispatch:
+    repository_dispatch: 
+      types: [wake_atlas]
+      
+    workflow_dispatch:
 
 jobs:
   wake:

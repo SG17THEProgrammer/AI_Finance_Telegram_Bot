@@ -38,7 +38,14 @@ def main():
     app.add_handler(
     MessageHandler(filters.TEXT & filters.Regex(f"^{WAKE_TAG}$"), handle_wake_message)
     )
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+
+    # General text handler explicitly excludes the wake tag
+    app.add_handler(
+    MessageHandler(
+        filters.TEXT & ~filters.COMMAND & ~filters.Regex(f"^{WAKE_TAG}$"),
+        handle_text
+    )
+)    
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.Document.PDF, handle_document))
