@@ -302,54 +302,80 @@ async def _check_api_rate_limits(bot):
 
 # ── Job 6: Internal keep-alive ping ───────────────────────────────────────────
 
+# ── Market window detection (DST-aware) ───────────────────────────────────────
+def _is_nasdaq_dst() -> bool:
+    """
+    US markets observe DST (mid-March to early November).
+    During DST:  NYSE/NASDAQ opens at 19:00 IST, closes at 01:30 IST next day.
+    During STD:  NYSE/NASDAQ opens at 20:00 IST, closes at 02:30 IST next day.
+    We check this by comparing UTC offset of US/Eastern vs IST (always UTC+5:30).
+    """
+    from zoneinfo import ZoneInfo
+    from datetime import datetime
+    eastern = ZoneInfo("America/New_York")
+    now_eastern = datetime.now(eastern)
+    # EDT = UTC-4 (DST active), EST = UTC-5 (standard time)
+    return now_eastern.utcoffset().total_seconds() == -4 * 3600
+
+
 def _is_in_market_window() -> bool:
     """
-    Returns True if current IST time is within an active market window:
-      - Indian market:  Mon–Fri  09:15–15:30 IST
-      - US market:      Mon–Fri  19:00–01:30 IST (crosses midnight)
-    
-    For the US window crossing midnight: Mon 19:00 to Tue 01:30 counts as
-    one continuous window. We check weekday on the evening side (must be
-    Mon–Fri) but allow the early morning continuation (00:00–01:30) even
-    on what is technically Tue–Sat, since it's a continuation of the
-    previous evening's session.
+    Returns True if current IST time is within an active market window.
+
+    # 1. NIFTY (India - All Year)
+       Mon-Fri  09:15 – 15:45 IST
+
+    # 2. NASDAQ SUMMER / DST (mid-March to early November)
+       Block A: Mon-Fri  19:00 – 23:59 IST
+       Block B: Tue-Sat  00:00 – 01:45 IST  (continuation of previous evening)
+
+    # 3. NASDAQ WINTER / STD (November to mid-March)
+       Block A: Mon-Fri  20:00 – 23:59 IST
+       Block B: Tue-Sat  00:00 – 02:45 IST  (continuation of previous evening)
     """
     now = datetime.now(IST)
     h, m = now.hour, now.minute
-    wd = now.weekday()  # 0=Mon, 6=Sun
+    wd = now.weekday()   # 0=Mon … 6=Sun
+    dst = _is_nasdaq_dst()
 
-    # Indian market window: 09:15–15:30, Mon–Fri only
-    if wd <= 4:  # Mon–Fri
+    # ── India: 09:15–15:45, Mon–Fri ──
+    if wd <= 4:
         in_india = (
-            (h == 9 and m >= 15) or
-            (10 <= h <= 14) or
-            (h == 15 and m <= 30)
+            (h == 9  and m >= 15) or
+            (10 <= h <= 14)        or
+            (h == 15 and m <= 45)
         )
         if in_india:
             return True
 
-    # US evening window: 19:00–23:59, Mon–Fri only
-    if wd <= 4 and 19 <= h <= 23:
+    # ── NASDAQ evening block (before midnight), Mon–Fri ──
+    nasdaq_open_hour = 19 if dst else 20
+    if wd <= 4 and nasdaq_open_hour <= h <= 23:
         return True
 
-    # US midnight continuation: 00:00–01:30
-    # This is Tue–Sat calendar-wise but is continuation of Mon–Fri evening
-    # so we allow it as long as the PREVIOUS day was a weekday (wd >= 1 means
-    # today is Tue–Sun, meaning yesterday was Mon–Sat; exclude Sunday night
-    # which would be wd==0 meaning today is Mon = yesterday was Sun)
-    if wd >= 1 and (h == 0 or (h == 1 and m <= 30)):
-        return True
+    # ── NASDAQ midnight continuation block, Tue–Sat ──
+    # DST:  00:00–01:45 IST
+    # STD:  00:00–02:45 IST
+    nasdaq_close_hour = 1 if dst else 2
+    nasdaq_close_min  = 45
+    if wd >= 1:   # Tue(1)–Sat(6) — yesterday was a weekday
+        if h == 0:
+            return True
+        if h == nasdaq_close_hour and m <= nasdaq_close_min:
+            return True
 
     return False
 
 
 async def _ping_self(public_url: str):
     """
-    Hits the health endpoint — but ONLY if we are currently inside a market
-    window. This prevents all-day pinging when the server should be idle.
+    Hits the health endpoint every 12 min to keep Render warm.
+    Only pings during active market windows — no unnecessary pings during
+    idle hours. The ping itself is lightweight (GET /) so it won't count
+    against any API quota.
     """
     if not _is_in_market_window():
-        return   # server is supposed to be idle — don't ping
+        return   # server supposed to be idle — don't ping
     import httpx
     try:
         async with httpx.AsyncClient() as client:
@@ -397,17 +423,16 @@ async def _wake_server_for_market():
 def start_scheduler(bot):
     scheduler = AsyncIOScheduler(timezone=IST)
 
-    # Job 1: Check briefing times every minute
+    # ── Job 1: Daily briefings — every 1 min ──────────────────────────────────
     scheduler.add_job(
         _check_and_send_briefings, "interval",
         minutes=1, args=[bot]
     )
 
-    # ── Alert checker jobs : 2+3+4 — scoped exactly to market windows ─────────────────
-
-    # Indian market: 09:15 AM – 15:30 PM IST, Mon–Fri
-    # hour="9-15" covers 09:xx–15:xx; the function itself won't fire before
-    # 09:15 or after 15:30 because _is_in_market_window() gates it.
+    # ── Jobs 2+3: Alert checker + re-armer ────────────────────────────────────
+    # India window: 09:15–15:45 IST, Mon–Fri
+    # hour="9-15" covers 09:xx–15:xx; _is_in_market_window() gates the exact
+    # minute boundaries (09:15 start, 15:45 end).
     scheduler.add_job(
         _check_and_send_alerts, "cron",
         day_of_week="mon-fri",
@@ -416,7 +441,9 @@ def start_scheduler(bot):
         misfire_grace_time=120,
     )
 
-    # US market evening: 19:00 PM – 23:45 PM IST, Mon–Fri
+    # NASDAQ evening block: 19:00–23:59 IST, Mon–Fri
+    # Covers both DST (19:00 open) and STD (20:00 open) — the function itself
+    # gates the exact open time via _is_in_market_window().
     scheduler.add_job(
         _check_and_send_alerts, "cron",
         day_of_week="mon-fri",
@@ -425,35 +452,33 @@ def start_scheduler(bot):
         misfire_grace_time=120,
     )
 
-    # US market midnight continuation: 00:00 AM – 01:30 AM IST
-    # Runs Tue–Sat calendar-wise (continuation of Mon–Fri evening session)
+    # NASDAQ midnight continuation: 00:00–02:45 IST, Tue–Sat
+    # Covers both DST (closes 01:45) and STD (closes 02:45).
     scheduler.add_job(
         _check_and_send_alerts, "cron",
         day_of_week="tue-sat",
-        hour="0-1", minute="*/15",
+        hour="0-2", minute="*/15",
         args=[bot], timezone=IST,
         misfire_grace_time=120,
     )
 
-    # Job 5: Daily baseline reset — 9:16 AM IST, Mon–Fri only
+    # ── Job 4: Daily baseline reset — 9:16 AM IST, Mon–Fri ───────────────────
     scheduler.add_job(
         _reset_index_baselines, "cron",
         day_of_week="mon-fri", hour=9, minute=16,
         args=[bot], timezone=IST
     )
 
-    # Job 6: API rate limit monitor — every 60 min
+    # ── Job 5: API rate monitor — every 60 min ────────────────────────────────
     scheduler.add_job(
         _check_api_rate_limits, "interval",
         minutes=60, args=[bot],
         misfire_grace_time=60
     )
 
-    # Job 7: Keep-alive — every 12 min, but the function itself checks the
-    # market window and returns immediately if we're outside it.
-    # This way: no external cron needed to "stop" pinging. The job runs
-    # silently during off-hours (negligible overhead) and only actually
-    # pings during the three daily windows.
+    # ── Job 6: Keep-alive ping — every 12 min ─────────────────────────────────
+    # Fires every 12 min but _ping_self() returns immediately outside market
+    # windows, so there's zero cost during idle hours.
     if PUBLIC_WEBHOOK_URL:
         scheduler.add_job(
             _ping_self, "interval",
@@ -464,26 +489,30 @@ def start_scheduler(bot):
         )
         print("[Scheduler] Keep-alive ping: every 12 min (market windows only).")
 
-    # Job 8: Memory cleanup — every 30 min to prevent yfinance RAM growth
+    # ── Job 7: Memory cleanup — every 30 min ──────────────────────────────────
     scheduler.add_job(
         _clear_yfinance_cache, "interval",
         minutes=30,
         misfire_grace_time=60,
     )
 
-    # Job 9: Wake server for Indian market window — 9:10 AM IST, Mon–Fri
-    # Sends a silent Telegram message to owner → Telegram delivers to webhook → Render wakes
+    # ── Jobs 8+9: Wake server before market opens ──────────────────────────────
+    # Cron-Job.org external pings handle the actual cold-start wake.
+    # These internal jobs send a secondary wake signal in case the server
+    # was already warm but needs to confirm the scheduler is running.
+
+    # Indian market: 09:05 AM IST, Mon–Fri
     scheduler.add_job(
         _wake_server_for_market, "cron",
-        day_of_week="mon-fri", hour=9, minute=10,
+        day_of_week="mon-fri", hour=9, minute=5,
         timezone=IST,
         misfire_grace_time=120,
     )
 
-    # Job 10: Wake server for US market window — 6:45 PM IST, Mon–Fri
+    # NASDAQ DST evening: 18:55 IST (~5 min before 19:00 open), Mon–Fri
     scheduler.add_job(
         _wake_server_for_market, "cron",
-        day_of_week="mon-fri", hour=18, minute=45,
+        day_of_week="mon-fri", hour=18, minute=55,
         timezone=IST,
         misfire_grace_time=120,
     )
